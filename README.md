@@ -31,9 +31,8 @@ Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills
 
 ### 3. Frontend
 
-1. Build Tailwind CSS (requires Node.js): run `npm install` then `npm run build:css`. This generates `assets/css/tailwind.built.css` and removes the "cdn.tailwindcss.com should not be used in production" console warning.
-2. Open `assets/js/config/sheets-config.js` and set `API_URL` to your Web App URL (replace `YOUR_SCRIPT_ID` or the whole URL).
-3. Serve the project (e.g. deploy to GitHub Pages or any static host). For local testing, use a simple HTTP server (e.g. `npx serve .`) so the Google Apps Script backend is not blocked by CORS.
+1. Open `assets/js/config/sheets-config.js` and set `API_URL` to your Web App URL (replace the placeholder or the whole URL).
+2. Serve the project (e.g. deploy to GitHub Pages or any static host). For local testing, use a simple HTTP server (e.g. `npx serve .`) so the Google Apps Script backend is not blocked by CORS. No build step is required.
 
 ## Usage
 
@@ -44,14 +43,14 @@ Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills
 
 ## Tech stack
 
-- Frontend: Vanilla JS, Tailwind CSS (built with Tailwind CLI; see `npm run build:css`).
-- Backend: Google Apps Script; data in Google Sheets.
+- **Frontend**: Vanilla JS, plain CSS (no framework). Single stylesheet: `assets/css/style.css` with semantic/BEM-style class names (e.g. `app`, `claims-modal`, `claims-name__input`).
+- **Backend**: Google Apps Script; data in Google Sheets.
 
 ## Files
 
 - `index.html` – Single-page app shell.
-- `assets/css/input.css` – Tailwind source; build with `npm run build:css` to produce `assets/css/tailwind.built.css`.
-- `assets/js/config/sheets-config.js` – API URL.
+- `assets/css/style.css` – All styles; semantic class names for layout, modal, calendar, product rows, summary, and products view.
+- `assets/js/config/sheets-config.js` – API URL (single source of truth for the Web App URL).
 - `assets/js/utils/` – api, formatters, claims-state.
 - `assets/js/components/` – calendar, name-combobox, product-row, summary.
 - `assets/js/pages/claims.js` – Claims page logic.

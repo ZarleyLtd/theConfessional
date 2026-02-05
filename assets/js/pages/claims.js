@@ -17,14 +17,14 @@
 
   function render() {
     if (!rootEl) return;
-    rootEl.innerHTML = '<div class="text-slate-400">Loading…</div>';
+    rootEl.innerHTML = '<div class="claims-message claims-message--loading">Loading…</div>';
     ClaimsAPI.getDatesWithBills()
       .then(function (dates) {
         state.enabledDates = dates || [];
         renderShell();
       })
       .catch(function (err) {
-        rootEl.innerHTML = '<div class="text-red-400">Failed to load dates: ' + (err.message || err) + '</div>';
+        rootEl.innerHTML = '<div class="claims-message claims-message--error">Failed to load dates: ' + (err.message || err) + '</div>';
       });
   }
 
@@ -37,11 +37,11 @@
   }
 
   function renderModalView() {
-    var html = '<div id="claims-modal-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">';
-    html += '<div class="bg-slate-800 border border-slate-600 rounded-xl shadow-xl max-w-lg w-full p-6 space-y-6">';
-    html += '<h2 class="text-xl font-semibold text-slate-100">Who is claiming?</h2>';
+    var html = '<div id="claims-modal-overlay" class="claims-modal">';
+    html += '<div class="claims-modal__panel">';
+    html += '<h2 class="claims-modal__heading">Who is claiming?</h2>';
     html += '<div id="claims-modal-name-mount"></div>';
-    html += '<h2 class="text-xl font-semibold text-slate-100 pt-2">Select date</h2>';
+    html += '<h2 class="claims-modal__heading">Select date</h2>';
     html += '<div id="claims-modal-calendar-mount"></div>';
     html += '</div></div>';
     rootEl.innerHTML = html;
@@ -91,11 +91,11 @@
         dateLabel = parseInt(parts[2], 10) + ' ' + (months[parseInt(parts[1], 10) - 1] || '') + ' ' + parts[0];
       }
     }
-    var html = '<div class="space-y-4">';
-    html += '<p class="text-slate-300 font-medium">Claiming as <strong class="text-slate-100">' + (state.userName || '') + '</strong> · ' + dateLabel + '</p>';
+    var html = '<div class="claims-products-view">';
+    html += '<p class="claims-products-intro">Claiming as <strong>' + (state.userName || '') + '</strong> · ' + dateLabel + '</p>';
     html += '<div id="claims-bill-mount"></div>';
     html += '<div id="claims-summary-mount"></div>';
-    html += '<button id="claims-submit-btn" type="button" class="mt-4 w-full py-3 px-4 bg-amber-600 text-slate-900 rounded-lg font-medium hover:bg-amber-500">Submit my claims</button>';
+    html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn">Submit my claims</button>';
     html += '</div>';
     rootEl.innerHTML = html;
     document.getElementById('claims-submit-btn').addEventListener('click', onSubmit);
@@ -156,12 +156,12 @@
     mount.innerHTML = '';
     var descLabel = document.createElement('p');
     descLabel.id = 'claims-descriptive-label';
-    descLabel.className = 'text-sm text-slate-300 mb-2';
+    descLabel.className = 'claims-descriptive-label';
     descLabel.textContent = 'Your selection: (none)';
     mount.appendChild(descLabel);
     state.displayOrderByRow = state.displayOrderByRow || {};
     var listEl = document.createElement('div');
-    listEl.className = 'space-y-4';
+    listEl.className = 'claims-products-list';
     mount.appendChild(listEl);
     var stateOrder = { 'claimed-by-me': 0, 'available': 1, 'claimed-by-other': 2 };
     items.forEach(function (item, idx) {

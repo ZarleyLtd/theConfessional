@@ -24,10 +24,10 @@
     });
     var foodUnclaimed = foodTotal - foodClaimed;
     var drinkUnclaimed = drinkTotal - drinkClaimed;
-    container.innerHTML = '<div class="bg-slate-800 border border-slate-600 rounded-lg shadow p-4 text-sm text-slate-300">' +
-      '<p class="font-medium text-slate-100 mb-2">Summary</p>' +
-      '<p>Food: ' + foodClaimed + ' claimed, ' + foodUnclaimed + ' unclaimed</p>' +
-      '<p>Drink: ' + drinkClaimed + ' claimed, ' + drinkUnclaimed + ' unclaimed</p>' +
+    container.innerHTML = '<div class="claims-summary">' +
+      '<p class="claims-summary__title">Summary</p>' +
+      '<p class="claims-summary__text">Food: ' + foodClaimed + ' claimed, ' + foodUnclaimed + ' unclaimed</p>' +
+      '<p class="claims-summary__text">Drink: ' + drinkClaimed + ' claimed, ' + drinkUnclaimed + ' unclaimed</p>' +
       '</div>';
   }
 

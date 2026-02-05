@@ -1,10 +1,4 @@
 {
   "name": "the-confessional",
-  "private": true,
-  "scripts": {
-    "build:css": "tailwindcss -i assets/css/input.css -o assets/css/tailwind.built.css --minify"
-  },
-  "devDependencies": {
-    "tailwindcss": "^3.4.17"
-  }
+  "private": true
 }

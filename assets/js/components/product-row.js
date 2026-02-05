@@ -26,13 +26,13 @@
     var onSlotClick = options.onSlotClick || function () {};
 
     var wrap = document.createElement('div');
-    wrap.className = 'claims-product-row bg-slate-800 border border-slate-600 rounded-lg shadow p-3';
+    wrap.className = 'claims-product-row';
     var label = document.createElement('div');
-    label.className = 'font-medium text-slate-200 mb-2';
+    label.className = 'claims-product-row__label';
     label.textContent = description + (category ? ' (' + category + ')' : '');
     wrap.appendChild(label);
     var strip = document.createElement('div');
-    strip.className = 'claims-product-strip flex overflow-x-auto pb-2';
+    strip.className = 'claims-product-strip';
     var unitIndices = displayOrder && displayOrder.length === quantity
       ? displayOrder
       : (function () { var a = []; for (var i = 0; i < quantity; i++) a.push(i); return a; })();
@@ -42,10 +42,9 @@
       var claimantName = claimMap[ClaimsState.slotKey(rowIndex, u)];
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'claims-slot-btn flex-shrink-0 rounded-xl border-2 flex items-center justify-center transition ' +
-        (slotState === 'available' ? 'claims-slot-btn available border-amber-500 bg-amber-400 hover:bg-amber-300 cursor-pointer' :
-          slotState === 'claimed-by-me' ? 'claims-slot-btn claimed-by-me border-slate-500 bg-slate-600 cursor-pointer hover:bg-slate-500' :
-            'claims-slot-btn claimed-by-other border-slate-600 bg-slate-700 cursor-pointer');
+      btn.className = 'claims-slot-btn ' +
+        (slotState === 'available' ? 'available' :
+          slotState === 'claimed-by-me' ? 'claimed-by-me' : 'claimed-by-other');
       btn.setAttribute('data-row', rowIndex);
       btn.setAttribute('data-unit', u);
       btn.textContent = getIcon(category);

@@ -65,7 +65,7 @@
     var weekStartsMonday = true;
     var dowOffset = weekStartsMonday ? (firstDow === 0 ? 6 : firstDow - 1) : firstDow;
 
-    var html = '<div class="claims-calendar calendar-month bg-slate-700 rounded-lg shadow-sm border border-slate-600 overflow-hidden">';
+    var html = '<div class="claims-calendar calendar-month">';
     html += '<div class="calendar-month-header">' + monthNames[month] + ' ' + year + '</div>';
     html += '<div class="calendar-weekdays">';
     var dayNames = weekStartsMonday ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

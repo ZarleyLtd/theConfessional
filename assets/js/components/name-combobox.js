@@ -23,7 +23,7 @@
     (names || []).forEach(function (name) {
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'block w-full text-left px-3 py-2 text-slate-200 hover:bg-slate-600 rounded';
+      btn.className = 'claims-name__option';
       btn.textContent = name;
       btn.addEventListener('click', function () { setValue(name); });
       dropdownEl.appendChild(btn);
@@ -34,10 +34,10 @@
     mount: function (container, options) {
       options = options || {};
       onSelectCallback = options.onSelect || function () {};
-      var html = '<div class="relative">';
-      html += '<label class="block text-sm font-medium text-slate-300 mb-1">Who are you?</label>';
-      html += '<input type="text" id="claims-name-input" placeholder="Select or type your name" class="w-full border border-slate-600 bg-slate-700 text-slate-100 rounded-lg px-3 py-2 placeholder-slate-400" autocomplete="off">';
-      html += '<div id="claims-name-dropdown" class="hidden absolute z-10 mt-1 w-full bg-slate-700 border border-slate-600 rounded-lg shadow-lg max-h-48 overflow-auto"></div>';
+      var html = '<div class="claims-name">';
+      html += '<label class="claims-name__label" for="claims-name-input">Who are you?</label>';
+      html += '<input type="text" id="claims-name-input" class="claims-name__input" placeholder="Select or type your name" autocomplete="off">';
+      html += '<div id="claims-name-dropdown" class="claims-name__dropdown hidden"></div>';
       html += '</div>';
       container.innerHTML = html;
       inputEl = document.getElementById('claims-name-input');

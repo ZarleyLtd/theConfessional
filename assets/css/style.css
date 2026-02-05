@@ -1,9 +1,144 @@
-/* Bar Bill Claims – overrides and calendar (R&R-style structure) */
+/* Bar Bill Claims – plain CSS (no Tailwind) */
 
-/* Calendar: single month, Mon–Sun grid */
+/* ---------- Base & layout ---------- */
+body {
+  background-color: #0f172a;
+  min-height: 100vh;
+  color: #f1f5f9;
+  margin: 0;
+  font-family: inherit;
+}
+
+.app {
+  max-width: 42rem;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 1.5rem 1rem;
+}
+@media (min-width: 640px) {
+  .app {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+.app__title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #f1f5f9;
+  margin-bottom: 1rem;
+}
+
+/* ---------- Utility ---------- */
+.hidden {
+  display: none !important;
+}
+
+/* ---------- Messages (loading / error) ---------- */
+.claims-message {
+  color: #94a3b8;
+}
+.claims-message--error {
+  color: #f87171;
+}
+
+/* ---------- Modal ---------- */
+.claims-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.7);
+  padding: 1rem;
+}
+.claims-modal__panel {
+  background-color: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 0.75rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  max-width: 32rem;
+  width: 100%;
+  padding: 1.5rem;
+}
+.claims-modal__panel > * + * {
+  margin-top: 1.5rem;
+}
+.claims-modal__heading {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+.claims-modal__heading + .claims-modal__heading {
+  padding-top: 0.5rem;
+}
+
+/* ---------- Name combobox ---------- */
+.claims-name {
+  position: relative;
+}
+.claims-name__label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #cbd5e1;
+  margin-bottom: 0.25rem;
+}
+.claims-name__input {
+  width: 100%;
+  border: 1px solid #475569;
+  background-color: #334155;
+  color: #f1f5f9;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  box-sizing: border-box;
+}
+.claims-name__input::placeholder {
+  color: #94a3b8;
+}
+.claims-name__input:focus {
+  outline: none;
+  border-color: #64748b;
+  box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.3);
+}
+.claims-name__dropdown {
+  position: absolute;
+  z-index: 10;
+  margin-top: 0.25rem;
+  width: 100%;
+  background-color: #334155;
+  border: 1px solid #475569;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  max-height: 12rem;
+  overflow: auto;
+}
+.claims-name__option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  color: #e2e8f0;
+  background: none;
+  border: none;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font: inherit;
+}
+.claims-name__option:hover {
+  background-color: #475569;
+}
+
+/* ---------- Calendar ---------- */
 .claims-calendar.calendar-month {
   padding: 1rem;
   min-width: 280px;
+  background-color: #334155;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  border: 1px solid #475569;
+  overflow: hidden;
 }
 @media (min-width: 768px) {
   .claims-calendar.calendar-month {
@@ -96,20 +231,37 @@
   border-color: #d97706;
 }
 
-/* Product rows: icon size by state, horizontal scroll, 3D buttons */
-.claims-product-row { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+/* ---------- Product rows ---------- */
+.claims-product-row {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  background-color: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  padding: 0.75rem;
+}
+.claims-product-row__label {
+  font-weight: 500;
+  color: #e2e8f0;
+  margin-bottom: 0.5rem;
+}
 .claims-product-strip {
+  display: flex;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
   flex-wrap: nowrap;
   min-width: min-content;
   gap: 1rem;
-  padding-right: 0.5rem;
 }
 .claims-product-strip .claims-slot-btn {
-  margin-right: 1rem;
+  margin-right: 0;
 }
 .claims-product-strip .claims-slot-btn:last-child {
   margin-right: 0;
 }
+
 .claims-slot-btn {
   width: 4rem;
   height: 4rem;
@@ -119,12 +271,16 @@
   flex-shrink: 0;
   border-width: 4px;
   border-style: solid;
+  border-radius: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
   box-shadow:
     inset 2px 2px 4px rgba(255, 255, 255, 0.2),
     inset -2px -2px 4px rgba(0, 0, 0, 0.35),
     0 3px 0 rgba(0, 0, 0, 0.25),
     0 5px 12px rgba(0, 0, 0, 0.25);
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 .claims-slot-btn:hover:not(:disabled) {
   box-shadow:
@@ -135,13 +291,37 @@
   transform: translateY(1px);
 }
 .claims-slot-btn:active:not(:disabled) {
-  box-shadow:
-    inset 0 2px 6px rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
   transform: translateY(2px);
 }
-.claims-slot-btn.available { color: #1e293b; font-size: 3.2rem; }
-.claims-slot-btn.claimed-by-me { color: #94a3b8; font-size: 2rem; }
-.claims-slot-btn.claimed-by-other { color: #64748b; opacity: 0.8; filter: grayscale(100%); }
+.claims-slot-btn.available {
+  color: #94a3b8;
+  font-size: 2rem;
+  border-color: #64748b;
+  background-color: #475569;
+  cursor: pointer;
+}
+.claims-slot-btn.available:hover {
+  background-color: #64748b;
+}
+.claims-slot-btn.claimed-by-me {
+  color: #1e293b;
+  font-size: 3.2rem;
+  border-color: #f59e0b;
+  background-color: #fbbf24;
+  cursor: pointer;
+}
+.claims-slot-btn.claimed-by-me:hover {
+  background-color: #fcd34d;
+}
+.claims-slot-btn.claimed-by-other {
+  color: #64748b;
+  opacity: 0.8;
+  filter: grayscale(100%);
+  border-color: #475569;
+  background-color: #334155;
+  cursor: pointer;
+}
 @media (min-width: 640px) {
   .claims-slot-btn {
     width: 4.5rem;
@@ -149,10 +329,75 @@
     min-width: 4.5rem;
     min-height: 4.5rem;
   }
-  .claims-slot-btn.available { font-size: 3.6rem; }
-  .claims-slot-btn.claimed-by-me { font-size: 2.25rem; }
+  .claims-slot-btn.available {
+    font-size: 2.25rem;
+  }
+  .claims-slot-btn.claimed-by-me {
+    font-size: 3.6rem;
+  }
+}
+
+/* ---------- Summary ---------- */
+.claims-summary {
+  background-color: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+  font-size: 0.875rem;
+  color: #cbd5e1;
+}
+.claims-summary__title {
+  font-weight: 600;
+  color: #f1f5f9;
+  margin-bottom: 0.5rem;
+}
+.claims-summary__text {
+  margin: 0.25rem 0;
+}
+
+/* ---------- Products view ---------- */
+.claims-products-view > * + * {
+  margin-top: 1rem;
+}
+.claims-products-intro {
+  color: #cbd5e1;
+  font-weight: 500;
+}
+.claims-products-intro strong {
+  color: #f1f5f9;
+}
+.claims-products-list > * + * {
+  margin-top: 1rem;
+}
+.claims-descriptive-label {
+  font-size: 0.875rem;
+  color: #cbd5e1;
+  margin-bottom: 0.5rem;
+}
+.claims-submit-btn {
+  margin-top: 1rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background-color: #d97706;
+  color: #111827;
+  border: none;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  font: inherit;
+  cursor: pointer;
+}
+.claims-submit-btn:hover {
+  background-color: #f59e0b;
+}
+.claims-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 @media (max-width: 640px) {
-  #app { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .app {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
 }

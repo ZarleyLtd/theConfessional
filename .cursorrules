@@ -4,6 +4,10 @@
 - Single-page app: main markup lives in `index.html`.
 - Optional shared HTML fragments can live in `/components/` (e.g. `header.html`, `footer.html`) and be pasted into `.html` files if needed.
 
+## Styling
+- **Plain CSS only**: No Tailwind or other CSS framework. All styles live in `assets/css/style.css`.
+- **Semantic / BEM-style class names**: Use meaningful, reusable classes (e.g. `app`, `app__title`, `claims-modal`, `claims-modal__panel`, `claims-name__input`, `claims-product-row`, `claims-slot-btn`, `claims-summary`). Add new UI by defining classes in `style.css` and using them in HTML or JS-generated markup; do not introduce utility-class patterns.
+
 ## JavaScript Module Architecture
 - **Configuration**: `/assets/js/config/sheets-config.js` – API URL and app config. Single source of truth for the Google Apps Script Web App URL.
 - **Utilities**: `/assets/js/utils/` – `api.js` (backend fetch), `formatters.js`, `claims-state.js` (slot state logic). Shared logic must live here, not duplicated.
@@ -19,5 +23,6 @@
 1. **API config**: To change the backend URL, only update `assets/js/config/sheets-config.js`.
 2. **Script order**: In HTML, load scripts in this order: config → utils → components → pages → main.js.
 3. **Paths**: Use relative paths (e.g. `assets/css/style.css`, `assets/js/config/sheets-config.js`). No absolute URLs or drive letters.
-4. **Sheets structure**: Config (Name), Bills (Date, RowIndex, Category, Description, Quantity, UnitPrice, TotalPrice), Claims (Date, UserName, RowIndex, UnitIndex). Do not change column semantics without updating both backend and frontend.
-5. **Reference files**: `sampledata` and `rnrREADME.md` are reference only; do not change them when implementing features.
+4. **Styling**: Keep plain CSS in `style.css` with semantic/BEM-style classes. Do not add Tailwind or other CSS frameworks.
+5. **Sheets structure**: Config (Name), Bills (Date, RowIndex, Category, Description, Quantity, UnitPrice, TotalPrice), Claims (Date, UserName, RowIndex, UnitIndex). Do not change column semantics without updating both backend and frontend.
+6. **Reference files**: `sampledata` and `rnrREADME.md` are reference only; do not change them when implementing features.

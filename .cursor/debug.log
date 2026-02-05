@@ -1,8 +1,0 @@
-{"location":"claims.js:showBillArea","message":"toggle bill area","data":{"show":false,"hasBillMount":true},"timestamp":1770245668624,"sessionId":"debug-session","hypothesisId":"H3"}
-{"location":"claims.js:onDateSelect","message":"date selected","data":{"date":"2026-02-23"},"timestamp":1770245668624,"sessionId":"debug-session","hypothesisId":"H5"}
-{"location":"claims.js:billLoaded","message":"bill and claims loaded","data":{"itemsLength":11,"hasBill":true},"timestamp":1770245673142,"sessionId":"debug-session","hypothesisId":"H1,H5"}
-{"location":"claims.js:renderBill","message":"renderBill start","data":{"hasMount":true,"itemsLength":11},"timestamp":1770245673143,"sessionId":"debug-session","hypothesisId":"H2,H4"}
-{"location":"claims.js:renderBill","message":"renderBill start","data":{"hasMount":true,"itemsLength":11},"timestamp":1770245673145,"sessionId":"debug-session","hypothesisId":"H2,H4"}
-{"location":"claims.js:renderBill","message":"renderBill start","data":{"hasMount":true,"itemsLength":11},"timestamp":1770245702037,"sessionId":"debug-session","hypothesisId":"H2,H4"}
-{"location":"claims.js:renderBill","message":"renderBill start","data":{"hasMount":true,"itemsLength":11},"timestamp":1770245711489,"sessionId":"debug-session","hypothesisId":"H2,H4"}
-{"location":"claims.js:renderBill","message":"renderBill start","data":{"hasMount":true,"itemsLength":11},"timestamp":1770245712922,"sessionId":"debug-session","hypothesisId":"H2,H4"}
