@@ -1,0 +1,158 @@
+/* Bar Bill Claims – overrides and calendar (R&R-style structure) */
+
+/* Calendar: single month, Mon–Sun grid */
+.claims-calendar.calendar-month {
+  padding: 1rem;
+  min-width: 280px;
+}
+@media (min-width: 768px) {
+  .claims-calendar.calendar-month {
+    min-width: 320px;
+  }
+}
+
+.calendar-month-header {
+  text-align: center;
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #475569;
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #94a3b8;
+  padding: 0.5rem;
+}
+
+.calendar-days-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.25rem;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  background: transparent;
+  font-family: inherit;
+  color: #e2e8f0;
+}
+@media (min-width: 768px) {
+  .calendar-day {
+    font-size: 1rem;
+  }
+}
+
+.calendar-day.empty {
+  cursor: default;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.calendar-day.available {
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.calendar-day.available:hover {
+  background-color: #475569;
+  border-color: #64748b;
+}
+.calendar-day.available:active {
+  transform: scale(0.95);
+}
+
+.calendar-day.booked {
+  font-weight: 400;
+  color: #64748b;
+  background-color: #334155;
+  cursor: not-allowed;
+}
+
+.calendar-day.selected {
+  background-color: #f59e0b;
+  color: #1e293b;
+  font-weight: 700;
+  border-color: #d97706;
+}
+
+/* Product rows: icon size by state, horizontal scroll, 3D buttons */
+.claims-product-row { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.claims-product-strip {
+  flex-wrap: nowrap;
+  min-width: min-content;
+  gap: 1rem;
+  padding-right: 0.5rem;
+}
+.claims-product-strip .claims-slot-btn {
+  margin-right: 1rem;
+}
+.claims-product-strip .claims-slot-btn:last-child {
+  margin-right: 0;
+}
+.claims-slot-btn {
+  width: 4rem;
+  height: 4rem;
+  min-width: 4rem;
+  min-height: 4rem;
+  line-height: 1;
+  flex-shrink: 0;
+  border-width: 4px;
+  border-style: solid;
+  box-shadow:
+    inset 2px 2px 4px rgba(255, 255, 255, 0.2),
+    inset -2px -2px 4px rgba(0, 0, 0, 0.35),
+    0 3px 0 rgba(0, 0, 0, 0.25),
+    0 5px 12px rgba(0, 0, 0, 0.25);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.claims-slot-btn:hover:not(:disabled) {
+  box-shadow:
+    inset 2px 2px 4px rgba(255, 255, 255, 0.25),
+    inset -2px -2px 4px rgba(0, 0, 0, 0.35),
+    0 2px 0 rgba(0, 0, 0, 0.25),
+    0 4px 10px rgba(0, 0, 0, 0.3);
+  transform: translateY(1px);
+}
+.claims-slot-btn:active:not(:disabled) {
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.4);
+  transform: translateY(2px);
+}
+.claims-slot-btn.available { color: #1e293b; font-size: 3.2rem; }
+.claims-slot-btn.claimed-by-me { color: #94a3b8; font-size: 2rem; }
+.claims-slot-btn.claimed-by-other { color: #64748b; opacity: 0.8; filter: grayscale(100%); }
+@media (min-width: 640px) {
+  .claims-slot-btn {
+    width: 4.5rem;
+    height: 4.5rem;
+    min-width: 4.5rem;
+    min-height: 4.5rem;
+  }
+  .claims-slot-btn.available { font-size: 3.6rem; }
+  .claims-slot-btn.claimed-by-me { font-size: 2.25rem; }
+}
+
+@media (max-width: 640px) {
+  #app { padding-left: 0.5rem; padding-right: 0.5rem; }
+}

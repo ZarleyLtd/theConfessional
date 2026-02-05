@@ -1,0 +1,28 @@
+# Project: Snooker League Website
+
+## Component Architecture
+- We use a component-based approach for HTML.
+- **Source Components**: Located in `/components/` (e.g., `header.html`, `footer.html`).
+- **Implementation**: These components are pasted directly into final `.html` files.
+
+## JavaScript Module Architecture
+- We use a modular, component-based approach for JavaScript.
+- **Configuration**: Located in `/assets/js/config/` (e.g., `sheets-config.js`).
+- **Utilities**: Located in `/assets/js/utils/` (e.g., `csv-loader.js`, `formatters.js`).
+- **Components**: Reusable JavaScript components in `/assets/js/components/` (e.g., `knockout-renderer.js`, `league-standings.js`).
+- **Pages**: Page-specific modules in `/assets/js/pages/` (e.g., `index.js`, `fixtures.js`).
+- **Entry Point**: Main router in `/assets/js/main.js`.
+- **No Duplication**: Common code must be extracted to utilities or components, never duplicated.
+
+## Rules for AI (Cursor)
+1. **HTML Syncing**: Whenever I ask to update the "Header" or "Footer," always update the code in the `/components/` folder first, then propagate to all `.html` files.
+2. **JavaScript Organization**: When adding or modifying JavaScript functionality:
+   - Update shared utilities in `/assets/js/utils/` first
+   - Update reusable components in `/assets/js/components/` for shared UI logic
+   - Update page-specific modules in `/assets/js/pages/` for page logic
+   - Never duplicate code - extract common patterns to utilities/components
+3. **Google Sheets Configuration**: To change the Google Sheet, only update `/assets/js/config/sheets-config.js` - this is the single source of truth.
+4. **Script Loading Order**: Scripts must be loaded in this order: config → utils → components → pages → main.js
+5. **Relative Paths**: Always use relative paths (e.g., `assets/css/style.css`, not `/assets/css/style.css`).
+6. **No absolute URLs**: Never include `http://localhost` or drive letters like `C:/Users/`.
+7. the rnrREADMEME.md file is from another project and is included here for reference. do not change this file

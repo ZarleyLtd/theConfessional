@@ -1,0 +1,104 @@
+{
+  "receipt_metadata": {
+    "establishment_name": "BAILEY BAR & CAFÉ",
+    "address": "1-4 Duke Street, Dublin 2, D02 ET99",
+    "website": "www.baileybarcafe.com",
+    "phone": "+353 1 670 4939",
+    "vat_number": "6544119N",
+    "server": "Karlo T",
+    "workstation_id": "4",
+    "check_number": "1027",
+    "table": "23/1",
+    "guest_count": 1,
+    "date": "2026-01-23",
+    "time_opened": "18:02 PM",
+    "time_closed": "22:40 PM"
+  },
+  "items": [
+    {
+      "category": "Food",
+      "description": "Chicken Goujons",
+      "quantity": 2,
+      "unit_price": 12.00,
+      "total_price": 24.00
+    },
+    {
+      "category": "Food",
+      "description": "French Fries",
+      "quantity": 2,
+      "unit_price": 6.50,
+      "total_price": 13.00
+    },
+    {
+      "category": "Food",
+      "description": "Cocktail Sausages",
+      "quantity": 1,
+      "unit_price": 11.00,
+      "total_price": 11.00
+    },
+    {
+      "category": "Food",
+      "description": "BLT",
+      "quantity": 1,
+      "unit_price": 12.00,
+      "total_price": 12.00
+    },
+    {
+      "category": "Drink",
+      "description": "Pt Moretti",
+      "quantity": 4,
+      "unit_price": 8.40,
+      "total_price": 33.60
+    },
+    {
+      "category": "Drink",
+      "description": "Pt Heineken",
+      "quantity": 5,
+      "unit_price": 7.70,
+      "total_price": 38.50
+    },
+    {
+      "category": "Drink",
+      "description": "Pt Guinness 0.0",
+      "quantity": 1,
+      "unit_price": 6.50,
+      "total_price": 6.50
+    },
+    {
+      "category": "Drink",
+      "description": "Pt Coors Light",
+      "quantity": 6,
+      "unit_price": 7.70,
+      "total_price": 46.20
+    },
+    {
+      "category": "Drink",
+      "description": "Pt Moretti",
+      "quantity": 1,
+      "unit_price": 8.40,
+      "total_price": 8.40
+    },
+    {
+      "category": "Drink",
+      "description": "Pt Heineken",
+      "quantity": 1,
+      "unit_price": 7.70,
+      "total_price": 7.70
+    },
+    {
+      "category": "Drink",
+      "description": "Pt Coors Light",
+      "quantity": 1,
+      "unit_price": 7.70,
+      "total_price": 7.70
+    }
+  ],
+  "totals": {
+    "subtotal": 208.60,
+    "discounts": 0.00,
+    "service_charge": 0.00,
+    "currency": "EUR",
+    "grand_total": 208.60
+  },
+  "notes": "All Gratuities are divided amongst the team members"
+}
