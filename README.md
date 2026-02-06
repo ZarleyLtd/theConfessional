@@ -19,6 +19,10 @@ Create a Google Sheet with three tabs:
   Headers: **Date**, **UserName**, **RowIndex**, **UnitIndex**  
   - One row per claimed unit. **RowIndex** / **UnitIndex** refer to the Bills row and which unit (0 to Quantity-1).
 
+- **ProductIcons** (optional)  
+  Headers: **Product**, **Image**  
+  - Maps product descriptions to image files. **Product** = text to match (case-insensitive, partial match: e.g. "Guinness" matches "Pt Guinness 0.0"). **Image** = filename (e.g. `GuinnessPint.png`). Images live in `assets/images/`. Longer matches take precedence. If no match, built-in rules and emoji fallbacks apply.
+
 Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills** (see `sampledata` for the item shape) so the calendar has a clickable date.
 
 ### 2. Backend (Google Apps Script)
@@ -40,6 +44,20 @@ Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills
 2. Select or type your name.
 3. Click product buttons to claim; click again to un-claim. Greyed-out buttons are claimed by others.
 4. Click **Submit my claims** to save to the sheet.
+
+## Troubleshooting – ProductIcons / images not showing
+
+1. **Redeploy the Apps Script** – After adding `getProductIcons` to `code.gs`, you must create a **new deployment** (or edit the existing one and deploy a new version). The live Web App runs the code from the last deployment.
+
+2. **Sheet name** – The tab must be named exactly `ProductIcons` (no space, that capitalization).
+
+3. **Column headers** – First row must include `Product` and `Image` (case doesn’t matter). Trailing spaces are ignored.
+
+4. **Image filenames** – Must match exactly, including case (e.g. `goujons.png` vs `Goujons.png`). Files live in `assets/images/`.
+
+5. **Subdirectory hosting** – If the app is served from a subpath (e.g. `yoursite.com/theConfessional/`), add `BASE_PATH: '/theConfessional'` to `CONFIRMATIONAL_CONFIG` in `sheets-config.js`.
+
+6. **Check the console** – If ProductIcons fails to load, a warning is logged. Open Developer Tools → Console to see it.
 
 ## Tech stack
 

@@ -3,7 +3,9 @@
  * states: available, claimed-by-me, claimed-by-other. Uses images from assets/images.
  */
 (function (global) {
-  var IMAGE_BASE = 'assets/images/';
+  var config = global.CONFIRMATIONAL_CONFIG || {};
+  var base = (config.BASE_PATH || '').replace(/\/?$/, '');
+  var IMAGE_BASE = base + (base ? '/' : '') + 'assets/images/';
   var IMAGES = {
     DrinkStout: 'GuinnessPint.png',
     DrinkWine: 'WineRed.png',
@@ -15,7 +17,24 @@
     default: '•'
   };
 
-  function getImageSrc(category, description) {
+  function getImageFromConfig(productIcons, description) {
+    if (!productIcons || !productIcons.length || !description) return null;
+    var d = description.toLowerCase();
+    var best = null;
+    var bestLen = 0;
+    for (var i = 0; i < productIcons.length; i++) {
+      var p = (productIcons[i].product || '').toLowerCase();
+      if (p && d.indexOf(p) >= 0 && p.length > bestLen) {
+        best = productIcons[i].image;
+        bestLen = p.length;
+      }
+    }
+    return best ? IMAGE_BASE + best : null;
+  }
+
+  function getImageSrc(category, description, productIcons) {
+    var configImg = getImageFromConfig(productIcons, description);
+    if (configImg) return configImg;
     if (category === 'Food') return null;
     if (category === 'Drink') {
       var d = (description || '').toLowerCase();
@@ -51,6 +70,7 @@
     var claimMap = options.claimMap || {};
     var mySelection = options.mySelection || [];
     var displayOrder = options.displayOrder;
+    var productIcons = options.productIcons || [];
     var onSlotClick = options.onSlotClick || function () {};
 
     var wrap = document.createElement('div');
@@ -75,7 +95,7 @@
           slotState === 'claimed-by-me' ? 'claimed-by-me' : 'claimed-by-other');
       btn.setAttribute('data-row', rowIndex);
       btn.setAttribute('data-unit', u);
-      var imgSrc = getImageSrc(category, description);
+      var imgSrc = getImageSrc(category, description, productIcons);
       if (imgSrc) {
         var img = document.createElement('img');
         img.src = imgSrc;
@@ -106,6 +126,7 @@
   var ProductRow = {
     render: render,
     getImageSrc: getImageSrc,
+    getImageFromConfig: getImageFromConfig,
     getFallbackIcon: getFallbackIcon
   };
   global.ProductRow = ProductRow;

@@ -11,6 +11,7 @@
     claims: [],
     mySelection: [],
     claimMap: {},
+    productIcons: [],
     readyForProducts: false,
     displayOrderByRow: {}
   };
@@ -63,12 +64,16 @@
 
   function onModalContinue() {
     if (!state.userName || !state.selectedDate) return;
-    Promise.all([
-      ClaimsAPI.getBill(state.selectedDate),
-      ClaimsAPI.getClaims(state.selectedDate)
-    ]).then(function (results) {
+    var billPromise = ClaimsAPI.getBill(state.selectedDate);
+    var claimsPromise = ClaimsAPI.getClaims(state.selectedDate);
+    var iconsPromise = ClaimsAPI.getProductIcons().catch(function (err) {
+      console.warn('ProductIcons load failed, using defaults:', err);
+      return [];
+    });
+    Promise.all([billPromise, claimsPromise, iconsPromise]).then(function (results) {
       state.bill = results[0];
       state.claims = results[1] || [];
+      state.productIcons = results[2] || [];
       state.claimMap = ClaimsState.buildClaimMap(state.claims);
       state.mySelection = (state.claims || []).filter(function (c) {
         return String(c.userName || '') === String(state.userName);
@@ -184,6 +189,7 @@
         currentUser: state.userName,
         claimMap: state.claimMap,
         mySelection: state.mySelection,
+        productIcons: state.productIcons,
         displayOrder: state.displayOrderByRow[ri],
         onSlotClick: function (rowIndex, unitIndex) { onSlotClick(rowIndex, unitIndex); }
       });

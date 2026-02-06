@@ -1,13 +1,14 @@
 /**
  * Bar Bill Claims – Google Apps Script Web App
- * Serves: dates with bills, bill for date, claims for date, config (names), submit claims.
- * Sheets: Config (Name), Bills (Date, RowIndex, Category, Description, Quantity, UnitPrice, TotalPrice), Claims (Date, UserName, RowIndex, UnitIndex)
+ * Serves: dates with bills, bill for date, claims for date, config (names), product icons, submit claims.
+ * Sheets: Config (Name), Bills, Claims, ProductIcons (Product, Image)
  */
 
 var SHEETS = {
   CONFIG: 'Config',
   BILLS: 'Bills',
-  CLAIMS: 'Claims'
+  CLAIMS: 'Claims',
+  PRODUCT_ICONS: 'ProductIcons'
 };
 
 function doGet(e) {
@@ -27,6 +28,8 @@ function doGet(e) {
       result.data = getClaimsForDate(date);
     } else if (action === 'config') {
       result.data = getConfigNames();
+    } else if (action === 'productIcons') {
+      result.data = getProductIcons();
     } else {
       throw new Error('Unknown or missing action');
     }
@@ -173,6 +176,32 @@ function getConfigNames() {
     if (n != null && String(n).trim() !== '') names.push(String(n).trim());
   }
   return names;
+}
+
+function getProductIcons() {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(SHEETS.PRODUCT_ICONS);
+  if (!sheet) return [];
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return [];
+  var header = data[0];
+  var productCol = -1;
+  var imageCol = -1;
+  for (var h = 0; h < header.length; h++) {
+    var val = (header[h] != null ? String(header[h]) : '').trim().toLowerCase();
+    if (val === 'product') productCol = h;
+    if (val === 'image') imageCol = h;
+  }
+  if (productCol < 0 || imageCol < 0) return [];
+  var rules = [];
+  for (var i = 1; i < data.length; i++) {
+    var product = data[i][productCol] != null ? String(data[i][productCol]).trim() : '';
+    var image = data[i][imageCol] != null ? String(data[i][imageCol]).trim() : '';
+    if (product !== '' && image !== '') {
+      rules.push({ product: product, image: image });
+    }
+  }
+  return rules;
 }
 
 function submitClaims(body) {

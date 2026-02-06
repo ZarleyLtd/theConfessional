@@ -41,6 +41,7 @@
     getBill: function (date) { return get('bill', { date: date }); },
     getClaims: function (date) { return get('claims', { date: date }); },
     getConfigNames: function () { return get('config'); },
+    getProductIcons: function () { return get('productIcons'); },
     submitClaims: function (payload) { return post('submitClaims', payload); }
   };
 
