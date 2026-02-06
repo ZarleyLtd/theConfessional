@@ -252,6 +252,24 @@ function submitClaims(body) {
   var cUnitCol = claimsHeader.indexOf('UnitIndex');
   if (cDateCol < 0 || cUserCol < 0 || cRowCol < 0 || cUnitCol < 0) throw new Error('Claims sheet missing columns');
 
+  var claimedByOthers = {};
+  for (var i = 1; i < claimsData.length; i++) {
+    var row = claimsData[i];
+    if (formatDate(row[cDateCol]) !== dateStr) continue;
+    if (String(row[cUserCol] || '') === String(userName)) continue;
+    var ri = parseInt(row[cRowCol], 10);
+    var ui = parseInt(row[cUnitCol], 10);
+    if (!isNaN(ri) && !isNaN(ui)) claimedByOthers[ri + '_' + ui] = true;
+  }
+  for (var c = 0; c < claims.length; c++) {
+    var r = claims[c].rowIndex;
+    var u = claims[c].unitIndex;
+    if (typeof r !== 'number' || typeof u !== 'number') continue;
+    if (claimedByOthers[r + '_' + u]) {
+      throw new Error('Slot already claimed by another user: rowIndex ' + r + ', unitIndex ' + u);
+    }
+  }
+
   var toDelete = [];
   for (var j = 1; j < claimsData.length; j++) {
     if (formatDate(claimsData[j][cDateCol]) === dateStr && String(claimsData[j][cUserCol] || '') === String(userName)) {

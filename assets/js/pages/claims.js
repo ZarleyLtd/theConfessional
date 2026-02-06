@@ -3,10 +3,13 @@
  */
 (function (global) {
   var rootEl;
+  var CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
+
   var state = {
     screen: 'home',       // 'home' | 'modal' | 'products'
     isReviewMode: false,  // true when user came via "Review Claim"
     enabledDates: [],
+    enabledDatesFetchedAt: null,
     selectedDate: null,
     userName: '',
     bill: null,
@@ -15,7 +18,11 @@
     claimMap: {},
     productIcons: [],
     readyForProducts: false,
-    displayOrderByRow: {}
+    displayOrderByRow: {},
+    billCache: {},
+    claimsCache: {},
+    productIconsCache: null,
+    productIconsFetchedAt: null
   };
 
   function goHome() {
@@ -31,18 +38,47 @@
     renderShell();
   }
 
+  function isDatesStale() {
+    if (!state.enabledDatesFetchedAt) return true;
+    return (Date.now() - state.enabledDatesFetchedAt) > CACHE_TTL_MS;
+  }
+
+  function isClaimsStaleForDate(date) {
+    var cached = state.claimsCache[date];
+    if (!cached || !cached.fetchedAt) return true;
+    return (Date.now() - cached.fetchedAt) > CACHE_TTL_MS;
+  }
+
+  function fetchDatesIfStale() {
+    return new Promise(function (resolve) {
+      if (!isDatesStale()) {
+        resolve(state.enabledDates);
+        return;
+      }
+      ClaimsAPI.getDatesWithBills()
+        .then(function (dates) {
+          state.enabledDates = dates || [];
+          state.enabledDatesFetchedAt = Date.now();
+          resolve(state.enabledDates);
+        })
+        .catch(function (err) {
+          console.error(err);
+          resolve(state.enabledDates);
+        });
+    });
+  }
+
   function render() {
     if (!rootEl) return;
-    rootEl.innerHTML = '<div class="claims-message claims-message--loading">Loading…</div>';
+    setAppHomeClass(true);
+    renderHomeView();
     ClaimsAPI.getDatesWithBills()
       .then(function (dates) {
         state.enabledDates = dates || [];
-        state.screen = 'home';
-        renderShell();
+        state.enabledDatesFetchedAt = Date.now();
       })
       .catch(function (err) {
-        setAppHomeClass(false);
-        rootEl.innerHTML = '<div class="claims-message claims-message--error">Failed to load dates: ' + (err.message || err) + '</div>';
+        console.warn('Background fetch dates failed:', err);
       });
   }
 
@@ -80,18 +116,26 @@
     rootEl.innerHTML = html;
     document.getElementById('claims-make-claim-btn').addEventListener('click', function () {
       state.isReviewMode = false;
-      state.screen = 'modal';
-      state.selectedDate = null;
-      state.userName = '';
-      renderShell();
+      onMakeOrReviewClaim();
     });
     document.getElementById('claims-review-claim-btn').addEventListener('click', function () {
       state.isReviewMode = true;
-      state.screen = 'modal';
-      state.selectedDate = null;
-      state.userName = '';
-      renderShell();
+      onMakeOrReviewClaim();
     });
+  }
+
+  function onMakeOrReviewClaim() {
+    state.screen = 'modal';
+    state.selectedDate = null;
+    state.userName = '';
+    if (isDatesStale()) {
+      rootEl.innerHTML = '<div class="claims-hero-bg" aria-hidden="true"></div><div class="claims-message claims-message--loading">Loading dates…</div>';
+      fetchDatesIfStale().then(function () {
+        renderShell();
+      });
+    } else {
+      renderShell();
+    }
   }
 
   function renderModalView() {
@@ -124,12 +168,29 @@
 
   function onModalContinue() {
     if (!state.userName || !state.selectedDate) return;
-    var billPromise = ClaimsAPI.getBill(state.selectedDate);
-    var claimsPromise = ClaimsAPI.getClaims(state.selectedDate);
-    var iconsPromise = ClaimsAPI.getProductIcons().catch(function (err) {
-      console.warn('ProductIcons load failed, using defaults:', err);
-      return [];
-    });
+    var date = state.selectedDate;
+    var billPromise = state.billCache[date]
+      ? Promise.resolve(state.billCache[date])
+      : ClaimsAPI.getBill(date).then(function (bill) {
+          state.billCache[date] = bill;
+          return bill;
+        });
+    var claimsPromise = !isClaimsStaleForDate(date) && state.claimsCache[date]
+      ? Promise.resolve(state.claimsCache[date].claims)
+      : ClaimsAPI.getClaims(date).then(function (claims) {
+          state.claimsCache[date] = { claims: claims, fetchedAt: Date.now() };
+          return claims;
+        });
+    var iconsPromise = state.productIconsCache
+      ? Promise.resolve(state.productIconsCache)
+      : ClaimsAPI.getProductIcons().then(function (icons) {
+          state.productIconsCache = icons;
+          state.productIconsFetchedAt = Date.now();
+          return icons;
+        }).catch(function (err) {
+          console.warn('ProductIcons load failed, using defaults:', err);
+          return [];
+        });
     Promise.all([billPromise, claimsPromise, iconsPromise]).then(function (results) {
       state.bill = results[0];
       state.claims = results[1] || [];
@@ -196,10 +257,19 @@
     }
     showBillArea(false);
     if (!date) return;
-    Promise.all([
-      ClaimsAPI.getBill(date),
-      ClaimsAPI.getClaims(date)
-    ]).then(function (results) {
+    var billPromise = state.billCache[date]
+      ? Promise.resolve(state.billCache[date])
+      : ClaimsAPI.getBill(date).then(function (bill) {
+          state.billCache[date] = bill;
+          return bill;
+        });
+    var claimsPromise = !isClaimsStaleForDate(date) && state.claimsCache[date]
+      ? Promise.resolve(state.claimsCache[date].claims)
+      : ClaimsAPI.getClaims(date).then(function (claims) {
+          state.claimsCache[date] = { claims: claims, fetchedAt: Date.now() };
+          return claims;
+        });
+    Promise.all([billPromise, claimsPromise]).then(function (results) {
       state.bill = results[0];
       state.claims = results[1] || [];
       state.claimMap = ClaimsState.buildClaimMap(state.claims);
@@ -327,6 +397,7 @@
     }).then(function (claims) {
       state.claims = claims || [];
       state.claimMap = ClaimsState.buildClaimMap(state.claims);
+      state.claimsCache[state.selectedDate] = { claims: claims, fetchedAt: Date.now() };
       renderBill();
       btn.disabled = false;
       btn.textContent = originalText;
@@ -343,9 +414,21 @@
         }, 3000);
       }
     }).catch(function (err) {
-      alert('Submit failed: ' + (err.message || err));
+      var msg = err.message || err;
+      alert('Submit failed: ' + msg);
       btn.disabled = false;
       btn.textContent = originalText;
+      if (msg.indexOf('already claimed') >= 0 || msg.indexOf('slot') >= 0) {
+        ClaimsAPI.getClaims(state.selectedDate).then(function (claims) {
+          state.claims = claims || [];
+          state.claimMap = ClaimsState.buildClaimMap(state.claims);
+          state.mySelection = (state.claims || []).filter(function (c) {
+            return String(c.userName || '') === String(state.userName);
+          }).map(function (c) { return { rowIndex: c.rowIndex, unitIndex: c.unitIndex }; });
+          state.claimsCache[state.selectedDate] = { claims: claims, fetchedAt: Date.now() };
+          renderBill();
+        }).catch(function () {});
+      }
     });
   }
 
