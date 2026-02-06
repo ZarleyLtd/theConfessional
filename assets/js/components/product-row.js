@@ -72,6 +72,7 @@
     var displayOrder = options.displayOrder;
     var productIcons = options.productIcons || [];
     var onSlotClick = options.onSlotClick || function () {};
+    var readOnly = options.readOnly === true;
 
     var wrap = document.createElement('div');
     wrap.className = 'claims-product-row';
@@ -112,11 +113,15 @@
       } else {
         btn.title = description;
       }
-      btn.addEventListener('click', function () {
-        var r = parseInt(this.getAttribute('data-row'), 10);
-        var uu = parseInt(this.getAttribute('data-unit'), 10);
-        onSlotClick(r, uu);
-      });
+      if (!readOnly && (slotState === 'available' || slotState === 'claimed-by-me')) {
+        btn.addEventListener('click', function () {
+          var r = parseInt(this.getAttribute('data-row'), 10);
+          var uu = parseInt(this.getAttribute('data-unit'), 10);
+          onSlotClick(r, uu);
+        });
+      } else if (readOnly) {
+        btn.classList.add('claims-slot-btn--readonly');
+      }
       strip.appendChild(btn);
     }
     wrap.appendChild(strip);

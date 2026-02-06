@@ -1,9 +1,11 @@
 /**
- * Claims page: modal (who + date) then products screen.
+ * Claims page: home (hero) -> modal (who + date) -> products screen.
  */
 (function (global) {
   var rootEl;
   var state = {
+    screen: 'home',       // 'home' | 'modal' | 'products'
+    isReviewMode: false,  // true when user came via "Review Claim"
     enabledDates: [],
     selectedDate: null,
     userName: '',
@@ -16,29 +18,86 @@
     displayOrderByRow: {}
   };
 
+  function goHome() {
+    state.screen = 'home';
+    state.readyForProducts = false;
+    state.isReviewMode = false;
+    state.selectedDate = null;
+    state.userName = '';
+    state.bill = null;
+    state.claims = [];
+    state.mySelection = [];
+    state.claimMap = {};
+    renderShell();
+  }
+
   function render() {
     if (!rootEl) return;
     rootEl.innerHTML = '<div class="claims-message claims-message--loading">Loading…</div>';
     ClaimsAPI.getDatesWithBills()
       .then(function (dates) {
         state.enabledDates = dates || [];
+        state.screen = 'home';
         renderShell();
       })
       .catch(function (err) {
+        setAppHomeClass(false);
         rootEl.innerHTML = '<div class="claims-message claims-message--error">Failed to load dates: ' + (err.message || err) + '</div>';
       });
   }
 
+  function setAppHomeClass(isHome) {
+    var app = document.getElementById('app');
+    if (app) {
+      if (isHome) app.classList.add('app--home');
+      else app.classList.remove('app--home');
+    }
+  }
+
   function renderShell() {
-    if (state.readyForProducts) {
-      renderProductsView();
+    if (state.screen === 'home') {
+      setAppHomeClass(true);
+      renderHomeView();
       return;
     }
-    renderModalView();
+    setAppHomeClass(false);
+    if (state.screen === 'modal' || !state.readyForProducts) {
+      renderModalView();
+      return;
+    }
+    renderProductsView();
+  }
+
+  function renderHomeView() {
+    var html = '<div class="claims-home">';
+    html += '<div class="claims-hero" style="background-image: url(\'assets/images/hero.png\');">';
+    html += '<div class="claims-hero__overlay"></div>';
+    html += '<h1 class="claims-hero__title">The Confessional</h1>';
+    html += '<div class="claims-hero__actions">';
+    html += '<button type="button" class="claims-hero__btn" id="claims-make-claim-btn">Make a claim</button>';
+    html += '<button type="button" class="claims-hero__btn" id="claims-review-claim-btn">Review Claim</button>';
+    html += '</div></div></div>';
+    rootEl.innerHTML = html;
+    document.getElementById('claims-make-claim-btn').addEventListener('click', function () {
+      state.isReviewMode = false;
+      state.screen = 'modal';
+      state.selectedDate = null;
+      state.userName = '';
+      renderShell();
+    });
+    document.getElementById('claims-review-claim-btn').addEventListener('click', function () {
+      state.isReviewMode = true;
+      state.screen = 'modal';
+      state.selectedDate = null;
+      state.userName = '';
+      renderShell();
+    });
   }
 
   function renderModalView() {
-    var html = '<div id="claims-modal-overlay" class="claims-modal">';
+    var html = '<div class="claims-hero-bg" aria-hidden="true"></div>';
+    html += '<button type="button" class="claims-home-btn" id="claims-modal-home-btn" aria-label="Home">Home</button>';
+    html += '<div id="claims-modal-overlay" class="claims-modal">';
     html += '<div class="claims-modal__panel">';
     html += '<h2 class="claims-modal__heading">Who is claiming?</h2>';
     html += '<div id="claims-modal-name-mount"></div>';
@@ -46,6 +105,7 @@
     html += '<div id="claims-modal-calendar-mount"></div>';
     html += '</div></div>';
     rootEl.innerHTML = html;
+    document.getElementById('claims-modal-home-btn').addEventListener('click', goHome);
     NameCombobox.mount(document.getElementById('claims-modal-name-mount'), {
       onSelect: function (name) {
         state.userName = name;
@@ -80,6 +140,7 @@
       }).map(function (c) { return { rowIndex: c.rowIndex, unitIndex: c.unitIndex }; });
       state.displayOrderByRow = {};
       state.readyForProducts = true;
+      state.screen = 'products';
       renderShell();
     }).catch(function (err) {
       console.error(err);
@@ -96,15 +157,27 @@
         dateLabel = parseInt(parts[2], 10) + ' ' + (months[parseInt(parts[1], 10) - 1] || '') + ' ' + parts[0];
       }
     }
-    var html = '<div class="claims-products-view">';
+    var html = '<div class="claims-hero-bg" aria-hidden="true"></div>';
+    html += '<button type="button" class="claims-home-btn" id="claims-products-home-btn" aria-label="Home">Home</button>';
+    html += '<div class="claims-products-wrap">';
+    html += '<div class="claims-products-view">';
     html += '<p class="claims-products-intro">Claiming as <strong>' + (state.userName || '') + '</strong> · ' + dateLabel + '</p>';
     html += '<div id="claims-bill-mount"></div>';
     html += '<div id="claims-summary-mount"></div>';
-    html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn">Submit my claims</button>';
-    html += '</div>';
+    html += '<div id="claims-selection-area">';
+    html += '<p id="claims-descriptive-label" class="claims-descriptive-label">Your selection: (none)</p>';
+    html += '<div id="claims-success-mount"></div>';
+    if (!state.isReviewMode) {
+      html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn">Submit my claims</button>';
+    }
+    html += '</div></div></div>';
     rootEl.innerHTML = html;
-    document.getElementById('claims-submit-btn').addEventListener('click', onSubmit);
+    document.getElementById('claims-products-home-btn').addEventListener('click', goHome);
+    if (!state.isReviewMode) {
+      document.getElementById('claims-submit-btn').addEventListener('click', onSubmit);
+    }
     renderBill();
+    updateDescriptiveLabel();
     var summaryMount = document.getElementById('claims-summary-mount');
     if (typeof window.Summary !== 'undefined' && window.Summary.render && summaryMount) {
       window.Summary.render(summaryMount, state.bill, state.claims);
@@ -118,7 +191,7 @@
     state.mySelection = [];
     state.claimMap = {};
     if (!state.readyForProducts) {
-      updateModalContinue();
+      onModalContinue();
       return;
     }
     showBillArea(false);
@@ -147,9 +220,11 @@
   function showBillArea(show) {
     var billMount = document.getElementById('claims-bill-mount');
     var summaryMount = document.getElementById('claims-summary-mount');
+    var selectionArea = document.getElementById('claims-selection-area');
     var submitBtn = document.getElementById('claims-submit-btn');
     if (billMount) billMount.classList.toggle('hidden', !show);
     if (summaryMount) summaryMount.classList.toggle('hidden', !show);
+    if (selectionArea) selectionArea.classList.toggle('hidden', !show);
     if (submitBtn) submitBtn.classList.toggle('hidden', !show);
   }
 
@@ -159,11 +234,6 @@
     var bill = state.bill || {};
     var items = bill.items || [];
     mount.innerHTML = '';
-    var descLabel = document.createElement('p');
-    descLabel.id = 'claims-descriptive-label';
-    descLabel.className = 'claims-descriptive-label';
-    descLabel.textContent = 'Your selection: (none)';
-    mount.appendChild(descLabel);
     state.displayOrderByRow = state.displayOrderByRow || {};
     var listEl = document.createElement('div');
     listEl.className = 'claims-products-list';
@@ -191,7 +261,8 @@
         mySelection: state.mySelection,
         productIcons: state.productIcons,
         displayOrder: state.displayOrderByRow[ri],
-        onSlotClick: function (rowIndex, unitIndex) { onSlotClick(rowIndex, unitIndex); }
+        onSlotClick: state.isReviewMode ? undefined : function (rowIndex, unitIndex) { onSlotClick(rowIndex, unitIndex); },
+        readOnly: state.isReviewMode
       });
       listEl.appendChild(rowEl);
     });
@@ -259,14 +330,17 @@
       renderBill();
       btn.disabled = false;
       btn.textContent = originalText;
-      var msg = document.createElement('div');
-      msg.className = 'claims-message claims-message--success';
-      msg.textContent = 'Claims saved successfully!';
-      msg.setAttribute('role', 'status');
-      var view = document.querySelector('.claims-products-view');
-      if (view) {
-        view.insertBefore(msg, view.firstChild.nextSibling);
-        setTimeout(function () { if (msg.parentNode) msg.parentNode.removeChild(msg); }, 3000);
+      var successMount = document.getElementById('claims-success-mount');
+      if (successMount) {
+        successMount.innerHTML = '';
+        var msg = document.createElement('div');
+        msg.className = 'claims-message claims-message--success';
+        msg.textContent = 'Claims saved successfully!';
+        msg.setAttribute('role', 'status');
+        successMount.appendChild(msg);
+        setTimeout(function () {
+          if (msg.parentNode) msg.parentNode.removeChild(msg);
+        }, 3000);
       }
     }).catch(function (err) {
       alert('Submit failed: ' + (err.message || err));
