@@ -237,7 +237,10 @@
   function onSubmit() {
     if (!state.selectedDate || state.userName === '') return;
     var btn = document.getElementById('claims-submit-btn');
-    if (btn) btn.disabled = true;
+    if (!btn) return;
+    var originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Processing…';
     ClaimsAPI.submitClaims({
       date: state.selectedDate,
       userName: state.userName,
@@ -248,10 +251,21 @@
       state.claims = claims || [];
       state.claimMap = ClaimsState.buildClaimMap(state.claims);
       renderBill();
-      if (btn) btn.disabled = false;
+      btn.disabled = false;
+      btn.textContent = originalText;
+      var msg = document.createElement('div');
+      msg.className = 'claims-message claims-message--success';
+      msg.textContent = 'Claims saved successfully!';
+      msg.setAttribute('role', 'status');
+      var view = document.querySelector('.claims-products-view');
+      if (view) {
+        view.insertBefore(msg, view.firstChild.nextSibling);
+        setTimeout(function () { if (msg.parentNode) msg.parentNode.removeChild(msg); }, 3000);
+      }
     }).catch(function (err) {
       alert('Submit failed: ' + (err.message || err));
-      if (btn) btn.disabled = false;
+      btn.disabled = false;
+      btn.textContent = originalText;
     });
   }
 

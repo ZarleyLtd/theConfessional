@@ -1,16 +1,44 @@
 /**
  * Product row: one row per line item; horizontal scroll of N buttons (N = quantity);
- * states: available, claimed-by-me, claimed-by-other. Category-based icon placeholder.
+ * states: available, claimed-by-me, claimed-by-other. Uses images from assets/images.
  */
 (function (global) {
-  var ICONS = {
+  var IMAGE_BASE = 'assets/images/';
+  var IMAGES = {
+    DrinkStout: 'GuinnessPint.png',
+    DrinkWine: 'WineRed.png',
+    DrinkLager: 'LagerPint.png'
+  };
+  var FALLBACK_ICONS = {
     Food: '🍽️',
-    Drink: '🍺',
+    DrinkSpirit: '🥃',
     default: '•'
   };
 
-  function getIcon(category) {
-    return ICONS[category] || ICONS.default;
+  function getImageSrc(category, description) {
+    if (category === 'Food') return null;
+    if (category === 'Drink') {
+      var d = (description || '').toLowerCase();
+      if (d.indexOf('guinness') >= 0) return IMAGE_BASE + IMAGES.DrinkStout;
+      if (d.indexOf('wine') >= 0) return IMAGE_BASE + IMAGES.DrinkWine;
+      if (d.indexOf('spirit') >= 0 || d.indexOf('vodka') >= 0 || d.indexOf('whiskey') >= 0 ||
+          d.indexOf('whisky') >= 0 || d.indexOf('rum') >= 0 || d.indexOf('gin') >= 0 ||
+          d.indexOf('tequila') >= 0 || d.indexOf('bourbon') >= 0) return null;
+      return IMAGE_BASE + IMAGES.DrinkLager;
+    }
+    return null;
+  }
+
+  function getFallbackIcon(category, description) {
+    if (category === 'Food') return FALLBACK_ICONS.Food;
+    if (category === 'Drink') {
+      var d = (description || '').toLowerCase();
+      if (d.indexOf('spirit') >= 0 || d.indexOf('vodka') >= 0 || d.indexOf('whiskey') >= 0 ||
+          d.indexOf('whisky') >= 0 || d.indexOf('rum') >= 0 || d.indexOf('gin') >= 0 ||
+          d.indexOf('tequila') >= 0 || d.indexOf('bourbon') >= 0) return FALLBACK_ICONS.DrinkSpirit;
+      return FALLBACK_ICONS.default;
+    }
+    return FALLBACK_ICONS.default;
   }
 
   function render(options) {
@@ -29,7 +57,7 @@
     wrap.className = 'claims-product-row';
     var label = document.createElement('div');
     label.className = 'claims-product-row__label';
-    label.textContent = description + (category ? ' (' + category + ')' : '');
+    label.textContent = description;
     wrap.appendChild(label);
     var strip = document.createElement('div');
     strip.className = 'claims-product-strip';
@@ -47,7 +75,16 @@
           slotState === 'claimed-by-me' ? 'claimed-by-me' : 'claimed-by-other');
       btn.setAttribute('data-row', rowIndex);
       btn.setAttribute('data-unit', u);
-      btn.textContent = getIcon(category);
+      var imgSrc = getImageSrc(category, description);
+      if (imgSrc) {
+        var img = document.createElement('img');
+        img.src = imgSrc;
+        img.alt = description;
+        img.className = 'claims-slot-btn__img';
+        btn.appendChild(img);
+      } else {
+        btn.textContent = getFallbackIcon(category, description);
+      }
       if (slotState === 'claimed-by-me') {
         btn.title = description + ' (click to unclaim)';
       } else if (slotState === 'claimed-by-other') {
@@ -68,7 +105,8 @@
 
   var ProductRow = {
     render: render,
-    getIcon: getIcon
+    getImageSrc: getImageSrc,
+    getFallbackIcon: getFallbackIcon
   };
   global.ProductRow = ProductRow;
 })(typeof window !== 'undefined' ? window : this);

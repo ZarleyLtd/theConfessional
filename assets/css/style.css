@@ -41,6 +41,10 @@ body {
 .claims-message--error {
   color: #f87171;
 }
+.claims-message--success {
+  color: #34d399;
+  font-weight: 500;
+}
 
 /* ---------- Modal ---------- */
 .claims-modal {
@@ -262,6 +266,14 @@ body {
   margin-right: 0;
 }
 
+.claims-slot-btn__img {
+  max-width: 70%;
+  max-height: 70%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
 .claims-slot-btn {
   width: 4rem;
   height: 4rem;
@@ -371,7 +383,7 @@ body {
   margin-top: 1rem;
 }
 .claims-descriptive-label {
-  font-size: 0.875rem;
+  font-size: 1rem;
   color: #cbd5e1;
   margin-bottom: 0.5rem;
 }
