@@ -22,12 +22,20 @@
     var k = slotKey(rowIndex, unitIndex);
     var claimedBy = claimMap[k];
     if (!claimedBy) return 'available';
-    return claimedBy === currentUser ? 'claimed-by-me' : 'claimed-by-other';
+    return String(claimedBy).toLowerCase() === String(currentUser || '').toLowerCase() ? 'claimed-by-me' : 'claimed-by-other';
+  }
+
+  function getMySelectionFromClaims(claims, userName) {
+    if (!Array.isArray(claims)) return [];
+    return claims.filter(function (c) {
+      return String(c.userName || '').toLowerCase() === String(userName || '').toLowerCase();
+    }).map(function (c) { return { rowIndex: c.rowIndex, unitIndex: c.unitIndex }; });
   }
 
   global.ClaimsState = {
     slotKey: slotKey,
     buildClaimMap: buildClaimMap,
-    getSlotState: getSlotState
+    getSlotState: getSlotState,
+    getMySelectionFromClaims: getMySelectionFromClaims
   };
 })(typeof window !== 'undefined' ? window : this);

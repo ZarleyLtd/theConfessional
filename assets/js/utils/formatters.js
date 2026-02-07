@@ -3,14 +3,12 @@
  */
 
 (function (global) {
-  function formatDateISO(date) {
-    if (!date) return '';
-    var d = typeof date === 'string' ? new Date(date + 'T12:00:00') : date;
-    if (isNaN(d.getTime())) return '';
-    var y = d.getFullYear();
-    var m = ('0' + (d.getMonth() + 1)).slice(-2);
-    var day = ('0' + d.getDate()).slice(-2);
-    return y + '-' + m + '-' + day;
+  function formatBillDateDisplay(dateStr) {
+    if (!dateStr) return '';
+    var parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return parseInt(parts[2], 10) + ' ' + (months[parseInt(parts[1], 10) - 1] || '') + ' ' + parts[0];
   }
 
   function formatCurrency(amount, currency) {
@@ -19,7 +17,7 @@
   }
 
   global.ClaimsFormatters = {
-    formatDateISO: formatDateISO,
+    formatBillDateDisplay: formatBillDateDisplay,
     formatCurrency: formatCurrency
   };
 })(typeof window !== 'undefined' ? window : this);

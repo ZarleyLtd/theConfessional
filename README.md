@@ -23,7 +23,11 @@ Create a Google Sheet with three tabs:
   Headers: **Product**, **Image**  
   - Maps product descriptions to image files. **Product** = text to match (case-insensitive, partial match: e.g. "Guinness" matches "Pt Guinness 0.0"). **Image** = filename (e.g. `GuinnessPint.png`). Images live in `assets/images/`. Longer matches take precedence. If no match, built-in rules and emoji fallbacks apply.
 
-Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills** (see `sampledata` for the item shape) so the calendar has a clickable date.
+- **BillMeta** (optional)  
+  Headers: **Date**, **BillImageId**  
+  - One row per bill date. **Date** = YYYY-MM-DD. **BillImageId** = Google Drive file ID of the original bill image. When set, a "View original bill" link appears on the claims page for that date. Upload flow can be added later; until then you can add a row manually (upload the image to Drive, set sharing to "Anyone with the link can view", paste the file ID into BillImageId).
+
+Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills** (see `sampledata` for the item shape) so the bill list has clickable dates.
 
 ### 2. Backend (Google Apps Script)
 
@@ -43,11 +47,11 @@ Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills
 1. Open the app. Choose a date (only dates that have data in **Bills** are clickable).
 2. Select or type your name.
 3. Click product buttons to claim; click again to un-claim. Greyed-out buttons are claimed by others.
-4. Click **Submit my claims** to save to the sheet.
+4. Click **Submit my claims** to save to the sheet. If a bill has an image stored (BillMeta.BillImageId), a **View original bill** link is shown on the products view.
 
 ## Troubleshooting – ProductIcons / images not showing
 
-1. **Redeploy the Apps Script** – After adding `getProductIcons` to `code.gs`, you must create a **new deployment** (or edit the existing one and deploy a new version). The live Web App runs the code from the last deployment.
+1. **Redeploy the Apps Script** – After any change to `code.gs` (including `getProductIcons`, BillMeta, or `getBillForDate`), you must create a **new deployment** (or edit the existing one and deploy a new version). The live Web App runs the code from the last deployment. If "View original bill" never appears even though BillMeta has a row for that date, redeploy and try again.
 
 2. **Sheet name** – The tab must be named exactly `ProductIcons` (no space, that capitalization).
 
@@ -67,12 +71,12 @@ Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills
 ## Files
 
 - `index.html` – Single-page app shell.
-- `assets/css/style.css` – All styles; semantic class names for layout, modal, calendar, product rows, summary, and products view.
+- `assets/css/style.css` – All styles; semantic class names for layout, modal, product rows, summary, and products view.
 - `assets/js/config/sheets-config.js` – API URL (single source of truth for the Web App URL).
 - `assets/js/utils/` – api, formatters, claims-state.
-- `assets/js/components/` – calendar, name-combobox, product-row, summary.
+- `assets/js/components/` – name-combobox, product-row, summary.
 - `assets/js/pages/claims.js` – Claims page logic.
 - `assets/js/main.js` – Entry point.
 - `backend/code.gs` – Google Apps Script Web App.
+Bill image upload (power-user) can be added later; the **Bills** sheet is expected to be filled by a separate process (e.g. manual entry or future script that matches the `sampledata` structure).
 
-Bill upload / image extraction is out of scope; the **Bills** sheet is expected to be filled by a separate process (e.g. future script that matches the `sampledata` structure).

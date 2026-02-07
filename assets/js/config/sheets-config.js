@@ -4,5 +4,6 @@
  * Must be on window so api.js (loaded after) can read it; top-level const is not on window in browsers.
  */
 var CONFIRMATIONAL_CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbzkYg-6uqb5ieg9YJYWSNViU6XlvMfzyqAgMPAm6mnBz272D07uCZ6ersLDDNgIeTfk2A/exec'
+  API_URL: 'https://script.google.com/macros/s/AKfycbzkYg-6uqb5ieg9YJYWSNViU6XlvMfzyqAgMPAm6mnBz272D07uCZ6ersLDDNgIeTfk2A/exec',
+  BASE_PATH: ''  // e.g. '/theConfessional' if served from a subpath
 };

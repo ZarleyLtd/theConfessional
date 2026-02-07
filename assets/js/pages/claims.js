@@ -1,13 +1,13 @@
 /**
- * Claims page: home (hero) -> modal (who + date) -> products screen.
+ * Claims page: initial (hero + name + bill lists) -> products screen.
  */
 (function (global) {
   var rootEl;
   var CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
 
   var state = {
-    screen: 'home',       // 'home' | 'modal' | 'products'
-    isReviewMode: false,  // true when user came via "Review Claim"
+    screen: 'home',       // 'home' | 'products'
+    isReviewMode: false,  // true when user selected from Historical bills
     enabledDates: [],
     enabledDatesFetchedAt: null,
     selectedDate: null,
@@ -21,19 +21,36 @@
     displayOrderByRow: {},
     billCache: {},
     claimsCache: {},
+    billImageCache: {},
     productIconsCache: null,
-    productIconsFetchedAt: null
+    productIconsFetchedAt: null,
+    productsLoading: false,
+    configNames: [],
+    originalClaimsForUser: []
   };
+
+  function normalizeUserName(name) {
+    if (!name || !state.configNames || state.configNames.length === 0) return name;
+    var trimmed = String(name).trim();
+    if (!trimmed) return name;
+    for (var i = 0; i < state.configNames.length; i++) {
+      if (String(state.configNames[i]).toLowerCase() === trimmed.toLowerCase()) {
+        return state.configNames[i];
+      }
+    }
+    return trimmed;
+  }
 
   function goHome() {
     state.screen = 'home';
     state.readyForProducts = false;
+    state.productsLoading = false;
     state.isReviewMode = false;
     state.selectedDate = null;
-    state.userName = '';
     state.bill = null;
     state.claims = [];
     state.mySelection = [];
+    state.originalClaimsForUser = [];
     state.claimMap = {};
     renderShell();
   }
@@ -55,8 +72,7 @@
         resolve(state.enabledDates);
         return;
       }
-      ClaimsAPI.getDatesWithBills()
-        .then(function (dates) {
+      ClaimsAPI.getDatesWithBills().then(function (dates) {
           state.enabledDates = dates || [];
           state.enabledDatesFetchedAt = Date.now();
           resolve(state.enabledDates);
@@ -71,14 +87,17 @@
   function render() {
     if (!rootEl) return;
     setAppHomeClass(true);
-    renderHomeView();
+    renderInitialView();
     ClaimsAPI.getDatesWithBills()
       .then(function (dates) {
         state.enabledDates = dates || [];
         state.enabledDatesFetchedAt = Date.now();
+        renderInitialViewLists();
+        prefetchFirstOpenBill();
       })
       .catch(function (err) {
         console.warn('Background fetch dates failed:', err);
+        renderInitialViewLists();
       });
   }
 
@@ -93,82 +112,160 @@
   function renderShell() {
     if (state.screen === 'home') {
       setAppHomeClass(true);
-      renderHomeView();
+      renderInitialView();
       return;
     }
     setAppHomeClass(false);
-    if (state.screen === 'modal' || !state.readyForProducts) {
-      renderModalView();
-      return;
-    }
     renderProductsView();
   }
 
-  function renderHomeView() {
-    var html = '<div class="claims-home">';
-    html += '<div class="claims-hero" style="background-image: url(\'assets/images/hero.png\');">';
+  function renderInitialView() {
+    var split = getOpenAndHistoricalDates();
+    var html = '<div class="claims-hero-bg" aria-hidden="true"></div>';
+    html += '<div class="claims-home">';
+    html += '<div class="claims-hero claims-hero--header-only">';
     html += '<div class="claims-hero__overlay"></div>';
     html += '<h1 class="claims-hero__title">The Confessional</h1>';
-    html += '<div class="claims-hero__actions">';
-    html += '<button type="button" class="claims-hero__btn" id="claims-make-claim-btn">Make a claim</button>';
-    html += '<button type="button" class="claims-hero__btn" id="claims-review-claim-btn">Review Claim</button>';
-    html += '</div></div></div>';
+    html += '</div>';
+    html += '<div class="claims-initial-content">';
+    html += '<div id="claims-modal-name-mount"></div>';
+    html += '<h2 class="claims-modal__heading">Open for claims</h2>';
+    html += '<div id="claims-modal-open-bills"></div>';
+    html += '<h2 class="claims-modal__heading">Historical bills</h2>';
+    html += '<div id="claims-modal-historical-bills"></div>';
+    html += '</div></div>';
     rootEl.innerHTML = html;
-    document.getElementById('claims-make-claim-btn').addEventListener('click', function () {
-      state.isReviewMode = false;
-      onMakeOrReviewClaim();
+    NameCombobox.mount(document.getElementById('claims-modal-name-mount'), {
+      initialValue: state.userName,
+      onSelect: function (name) {
+        state.userName = name;
+      },
+      onConfigLoaded: function (names) {
+        state.configNames = names;
+      }
     });
-    document.getElementById('claims-review-claim-btn').addEventListener('click', function () {
+    renderBillList('claims-modal-open-bills', split.open, false, function (date) {
+      state.selectedDate = date;
+      state.isReviewMode = false;
+      if (state.userName) onBillSelectedContinue();
+    });
+    renderBillList('claims-modal-historical-bills', split.historical, true, function (date) {
+      state.selectedDate = date;
       state.isReviewMode = true;
-      onMakeOrReviewClaim();
+      if (state.userName) onBillSelectedContinue();
     });
   }
 
-  function onMakeOrReviewClaim() {
-    state.screen = 'modal';
-    state.selectedDate = null;
-    state.userName = '';
-    if (isDatesStale()) {
-      rootEl.innerHTML = '<div class="claims-hero-bg" aria-hidden="true"></div><div class="claims-message claims-message--loading">Loading dates…</div>';
-      fetchDatesIfStale().then(function () {
-        renderShell();
-      });
-    } else {
-      renderShell();
+  function renderInitialViewLists() {
+    var split = getOpenAndHistoricalDates();
+    renderBillList('claims-modal-open-bills', split.open, false, function (date) {
+      state.selectedDate = date;
+      state.isReviewMode = false;
+      if (state.userName) onBillSelectedContinue();
+    });
+    renderBillList('claims-modal-historical-bills', split.historical, true, function (date) {
+      state.selectedDate = date;
+      state.isReviewMode = true;
+      if (state.userName) onBillSelectedContinue();
+    });
+  }
+
+  function buildBillImageDataUrl(data) {
+    var mimeType = (data && data.mimeType) ? data.mimeType : 'image/jpeg';
+    var base64 = (data && data.base64) ? data.base64 : '';
+    return 'data:' + mimeType + ';base64,' + base64;
+  }
+
+  function prefetchFirstOpenBill() {
+    var split = getOpenAndHistoricalDates();
+    var firstOpen = split.open[0];
+    if (firstOpen && !state.billCache[firstOpen]) {
+      ClaimsAPI.getBill(firstOpen).then(function (bill) {
+        state.billCache[firstOpen] = bill;
+      }).catch(function () {});
     }
   }
 
-  function renderModalView() {
-    var html = '<div class="claims-hero-bg" aria-hidden="true"></div>';
-    html += '<button type="button" class="claims-home-btn" id="claims-modal-home-btn" aria-label="Home">Home</button>';
-    html += '<div id="claims-modal-overlay" class="claims-modal">';
-    html += '<div class="claims-modal__panel">';
-    html += '<h2 class="claims-modal__heading">Who is claiming?</h2>';
-    html += '<div id="claims-modal-name-mount"></div>';
-    html += '<h2 class="claims-modal__heading">Select date</h2>';
-    html += '<div id="claims-modal-calendar-mount"></div>';
-    html += '</div></div>';
-    rootEl.innerHTML = html;
-    document.getElementById('claims-modal-home-btn').addEventListener('click', goHome);
-    NameCombobox.mount(document.getElementById('claims-modal-name-mount'), {
-      onSelect: function (name) {
-        state.userName = name;
-        if (state.selectedDate) onModalContinue();
-      }
-    });
-    CalendarComponent.mount(document.getElementById('claims-modal-calendar-mount'), {
-      enabledDates: state.enabledDates,
-      selectedDate: state.selectedDate,
-      onSelect: function (date) {
-        state.selectedDate = date;
-        if (state.userName) onModalContinue();
-      }
-    });
+  function getOpenAndHistoricalDates() {
+    var items = state.enabledDates || [];
+    var openDates = [];
+    var historicalDates = [];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var dateStr = typeof item === 'string' ? item : (item && item.date);
+      var isOpen = typeof item === 'string' ? true : (typeof item === 'object' && item && item.open === true);
+      if (!dateStr) continue;
+      if (isOpen) openDates.push(dateStr);
+      else historicalDates.push(dateStr);
+    }
+    openDates.sort();
+    historicalDates.sort().reverse();
+    return { open: openDates, historical: historicalDates };
   }
 
-  function onModalContinue() {
+  function renderBillList(containerId, dates, isHistorical, onSelect) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    var listEl = document.createElement('div');
+    listEl.className = 'claims-bills-list';
+    if (!state.enabledDatesFetchedAt && dates.length === 0) {
+      var loading = document.createElement('p');
+      loading.className = 'claims-bills-empty claims-bills-loading';
+      loading.textContent = 'Loading dates…';
+      listEl.appendChild(loading);
+    } else if (dates.length === 0) {
+      var empty = document.createElement('p');
+      empty.className = 'claims-bills-empty';
+      empty.textContent = isHistorical ? 'No historical bills.' : 'No bills open for claims.';
+      listEl.appendChild(empty);
+    } else {
+      for (var i = 0; i < dates.length; i++) {
+        var dateStr = dates[i];
+        var label = ClaimsFormatters.formatBillDateDisplay(dateStr);
+        var item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'claims-bill-item' + (isHistorical ? ' claims-bill-item--historical' : '');
+        item.setAttribute('data-date', dateStr);
+        item.innerHTML = '<span class="claims-bill-item__icon" aria-hidden="true">🧾</span><span class="claims-bill-item__date">' + label + '</span>';
+        item.addEventListener('click', function () {
+          var d = this.getAttribute('data-date');
+          if (d && onSelect) onSelect(d);
+        });
+        listEl.appendChild(item);
+      }
+    }
+    container.appendChild(listEl);
+  }
+
+  function onBillSelectedContinue() {
     if (!state.userName || !state.selectedDate) return;
+    if (!state.configNames || state.configNames.length === 0) {
+      ClaimsAPI.getConfigNames().then(function (names) {
+        state.configNames = names || [];
+        state.userName = normalizeUserName(state.userName);
+        proceedToProducts();
+      }).catch(function () {
+        proceedToProducts();
+      });
+      return;
+    }
+    state.userName = normalizeUserName(state.userName);
+    proceedToProducts();
+  }
+
+  function proceedToProducts() {
     var date = state.selectedDate;
+    state.screen = 'products';
+    state.readyForProducts = true;
+    state.productsLoading = true;
+    state.bill = null;
+    state.claims = [];
+    state.mySelection = [];
+    state.originalClaimsForUser = [];
+    state.claimMap = {};
+    renderShell();
+
     var billPromise = state.billCache[date]
       ? Promise.resolve(state.billCache[date])
       : ClaimsAPI.getBill(date).then(function (bill) {
@@ -196,30 +293,32 @@
       state.claims = results[1] || [];
       state.productIcons = results[2] || [];
       state.claimMap = ClaimsState.buildClaimMap(state.claims);
-      state.mySelection = (state.claims || []).filter(function (c) {
-        return String(c.userName || '') === String(state.userName);
-      }).map(function (c) { return { rowIndex: c.rowIndex, unitIndex: c.unitIndex }; });
+      state.mySelection = ClaimsState.getMySelectionFromClaims(state.claims, state.userName);
+      state.originalClaimsForUser = state.mySelection.map(function (s) { return { rowIndex: s.rowIndex, unitIndex: s.unitIndex }; });
       state.displayOrderByRow = {};
-      state.readyForProducts = true;
-      state.screen = 'products';
+      state.productsLoading = false;
       renderShell();
+      prefetchBillImage(date);
     }).catch(function (err) {
       console.error(err);
+      state.productsLoading = false;
+      state.bill = state.bill || { items: [] };
+      renderBill();
       alert('Failed to load bill: ' + (err.message || err));
     });
   }
 
   function renderProductsView() {
-    var dateLabel = state.selectedDate || '';
-    if (state.selectedDate) {
-      var parts = state.selectedDate.split('-');
-      if (parts.length === 3) {
-        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        dateLabel = parseInt(parts[2], 10) + ' ' + (months[parseInt(parts[1], 10) - 1] || '') + ' ' + parts[0];
-      }
-    }
+    var dateLabel = ClaimsFormatters.formatBillDateDisplay(state.selectedDate) || state.selectedDate || '';
     var html = '<div class="claims-hero-bg" aria-hidden="true"></div>';
-    html += '<button type="button" class="claims-home-btn" id="claims-products-home-btn" aria-label="Home">Home</button>';
+    html += '<div class="claims-products-topbar">';
+    html += '<button type="button" class="claims-home-btn" id="claims-products-home-btn" aria-label="Home"><svg class="claims-home-btn__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></button>';
+    if (state.bill && state.bill.metadata && state.bill.metadata.billImageUrl && state.selectedDate) {
+      html += '<button type="button" class="claims-view-bill-btn" id="claims-view-bill-btn" data-date="' + state.selectedDate + '" title="View original bill"><span class="claims-view-bill-btn__receipt"></span><span class="claims-view-bill-btn__label">View Bill</span></button>';
+    } else {
+      html += '<span class="claims-products-topbar__spacer"></span>';
+    }
+    html += '</div>';
     html += '<div class="claims-products-wrap">';
     html += '<div class="claims-products-view">';
     html += '<p class="claims-products-intro">Claiming as <strong>' + (state.userName || '') + '</strong> · ' + dateLabel + '</p>';
@@ -227,13 +326,19 @@
     html += '<div id="claims-summary-mount"></div>';
     html += '<div id="claims-selection-area">';
     html += '<p id="claims-descriptive-label" class="claims-descriptive-label">Your selection: (none)</p>';
-    html += '<div id="claims-success-mount"></div>';
     if (!state.isReviewMode) {
-      html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn">Submit my claims</button>';
+      html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn"><span class="claims-submit-btn__text">Submit my claims</span><span class="claims-submit-btn__progress-wrap"><span class="claims-submit-btn__progress"></span></span></button>';
     }
     html += '</div></div></div>';
     rootEl.innerHTML = html;
     document.getElementById('claims-products-home-btn').addEventListener('click', goHome);
+    var viewBillBtn = document.getElementById('claims-view-bill-btn');
+    if (viewBillBtn) {
+      viewBillBtn.addEventListener('click', function () {
+        var date = viewBillBtn.getAttribute('data-date');
+        openBillImageLightbox(date);
+      });
+    }
     if (!state.isReviewMode) {
       document.getElementById('claims-submit-btn').addEventListener('click', onSubmit);
     }
@@ -245,62 +350,67 @@
     }
   }
 
-  function onDateSelect(date) {
-    state.selectedDate = date;
-    state.bill = null;
-    state.claims = [];
-    state.mySelection = [];
-    state.claimMap = {};
-    if (!state.readyForProducts) {
-      onModalContinue();
-      return;
+  function openBillImageLightbox(date) {
+    if (!date || typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getBillImage) return;
+    var overlay = document.createElement('div');
+    overlay.className = 'claims-bill-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Original bill image');
+    overlay.innerHTML = '<div class="claims-bill-lightbox__content"><button type="button" class="claims-bill-lightbox__close" aria-label="Close">×</button><div class="claims-bill-lightbox__loading">Loading…</div></div>';
+    document.body.appendChild(overlay);
+
+    function closeLightbox() {
+      overlay.removeEventListener('click', onOverlayClick);
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     }
-    showBillArea(false);
-    if (!date) return;
-    var billPromise = state.billCache[date]
-      ? Promise.resolve(state.billCache[date])
-      : ClaimsAPI.getBill(date).then(function (bill) {
-          state.billCache[date] = bill;
-          return bill;
+    function onOverlayClick(e) {
+      if (e.target === overlay) closeLightbox();
+    }
+    overlay.querySelector('.claims-bill-lightbox__close').addEventListener('click', closeLightbox);
+    overlay.addEventListener('click', onOverlayClick);
+
+    function showBillImage(dataUrl) {
+      var loadingEl = overlay.querySelector('.claims-bill-lightbox__loading');
+      if (!loadingEl || !overlay.parentNode) return;
+      var img = document.createElement('img');
+      img.src = dataUrl;
+      img.alt = 'Original bill';
+      img.className = 'claims-bill-lightbox__img';
+      loadingEl.parentNode.replaceChild(img, loadingEl);
+    }
+
+    if (state.billImageCache[date]) {
+      showBillImage(state.billImageCache[date]);
+    } else {
+      ClaimsAPI.getBillImage(date)
+        .then(function (data) {
+          var dataUrl = buildBillImageDataUrl(data);
+          state.billImageCache[date] = dataUrl;
+          showBillImage(dataUrl);
+        })
+        .catch(function (err) {
+          var loadingEl = overlay.querySelector('.claims-bill-lightbox__loading');
+          if (loadingEl) loadingEl.textContent = 'Failed to load image: ' + (err.message || err);
         });
-    var claimsPromise = !isClaimsStaleForDate(date) && state.claimsCache[date]
-      ? Promise.resolve(state.claimsCache[date].claims)
-      : ClaimsAPI.getClaims(date).then(function (claims) {
-          state.claimsCache[date] = { claims: claims, fetchedAt: Date.now() };
-          return claims;
-        });
-    Promise.all([billPromise, claimsPromise]).then(function (results) {
-      state.bill = results[0];
-      state.claims = results[1] || [];
-      state.claimMap = ClaimsState.buildClaimMap(state.claims);
-      state.mySelection = (state.claims || []).filter(function (c) {
-        return String(c.userName || '') === String(state.userName);
-      }).map(function (c) { return { rowIndex: c.rowIndex, unitIndex: c.unitIndex }; });
-      state.displayOrderByRow = {};
-      renderBill();
-      showBillArea(true);
-    }).catch(function (err) {
-      console.error(err);
-      if (!state.bill) state.bill = { items: [] };
-      renderBill();
-      showBillArea(true);
-    });
+    }
   }
 
-  function showBillArea(show) {
-    var billMount = document.getElementById('claims-bill-mount');
-    var summaryMount = document.getElementById('claims-summary-mount');
-    var selectionArea = document.getElementById('claims-selection-area');
-    var submitBtn = document.getElementById('claims-submit-btn');
-    if (billMount) billMount.classList.toggle('hidden', !show);
-    if (summaryMount) summaryMount.classList.toggle('hidden', !show);
-    if (selectionArea) selectionArea.classList.toggle('hidden', !show);
-    if (submitBtn) submitBtn.classList.toggle('hidden', !show);
+  function prefetchBillImage(date) {
+    if (!date || !state.bill || !state.bill.metadata || !state.bill.metadata.billImageUrl) return;
+    if (state.billImageCache[date]) return;
+    ClaimsAPI.getBillImage(date).then(function (data) {
+      state.billImageCache[date] = buildBillImageDataUrl(data);
+    }).catch(function () {});
   }
 
   function renderBill() {
     var mount = document.getElementById('claims-bill-mount');
     if (!mount) return;
+    if (state.productsLoading) {
+      mount.innerHTML = '<div class="claims-products-loading">Loading bill…</div>';
+      return;
+    }
     var bill = state.bill || {};
     var items = bill.items || [];
     mount.innerHTML = '';
@@ -332,6 +442,9 @@
         productIcons: state.productIcons,
         displayOrder: state.displayOrderByRow[ri],
         onSlotClick: state.isReviewMode ? undefined : function (rowIndex, unitIndex) { onSlotClick(rowIndex, unitIndex); },
+        onClaimedByOtherClick: state.isReviewMode ? undefined : function (rowIndex, unitIndex, claimantName, buttonEl) {
+          showClaimedByOtherMessage(claimantName, buttonEl);
+        },
         readOnly: state.isReviewMode
       });
       listEl.appendChild(rowEl);
@@ -356,7 +469,7 @@
     var idx = state.mySelection.findIndex(function (s) { return s.rowIndex === rowIndex && s.unitIndex === unitIndex; });
     if (slotState === 'claimed-by-me' || idx >= 0) {
       state.mySelection = state.mySelection.filter(function (s) { return !(s.rowIndex === rowIndex && s.unitIndex === unitIndex); });
-      state.claims = state.claims.filter(function (c) { return !(c.rowIndex === rowIndex && c.unitIndex === unitIndex && c.userName === state.userName); });
+      state.claims = state.claims.filter(function (c) { return !(c.rowIndex === rowIndex && c.unitIndex === unitIndex && String(c.userName || '').toLowerCase() === String(state.userName || '').toLowerCase()); });
     } else {
       state.mySelection.push({ rowIndex: rowIndex, unitIndex: unitIndex });
       state.claims = state.claims.concat([{ date: state.selectedDate, userName: state.userName, rowIndex: rowIndex, unitIndex: unitIndex }]);
@@ -381,13 +494,83 @@
     el.textContent = 'Your selection: ' + (parts.length ? parts.join(', ') : '(none)');
   }
 
+  function showClaimedByOtherMessage(claimantName, buttonEl) {
+    var text = 'Claimed by ' + (claimantName || 'someone else');
+    var msg = document.createElement('div');
+    msg.className = 'claims-info-message claims-info-message--above';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
+    msg.innerHTML = '<span class="claims-info-message__text">' + (text || '').replace(/</g, '&lt;') + '</span>';
+    document.body.appendChild(msg);
+    if (buttonEl) {
+      var rect = buttonEl.getBoundingClientRect();
+      var centerX = rect.left + rect.width / 2;
+      msg.style.top = (rect.top - 8) + 'px';
+      msg.style.left = centerX + 'px';
+      var msgRect = msg.getBoundingClientRect();
+      var pad = 8;
+      var left = centerX;
+      if (msgRect.left < pad) {
+        left = left + (pad - msgRect.left);
+      } else if (msgRect.right > window.innerWidth - pad) {
+        left = left - (msgRect.right - (window.innerWidth - pad));
+      }
+      msg.style.left = left + 'px';
+      if (msgRect.top < pad) {
+        msg.style.top = (rect.bottom + 8) + 'px';
+        msg.classList.remove('claims-info-message--above');
+        msg.classList.add('claims-info-message--below');
+      }
+    }
+    setTimeout(function () {
+      if (msg.parentNode) msg.parentNode.removeChild(msg);
+    }, 1000);
+  }
+
+  function showInfoMessage(text, submitBtn) {
+    var labelEl = document.getElementById('claims-descriptive-label');
+    var msg = document.createElement('div');
+    msg.className = 'claims-info-message';
+    msg.setAttribute('role', 'status');
+    msg.setAttribute('aria-live', 'polite');
+    msg.innerHTML = '<span class="claims-info-message__text">' + (text || '').replace(/</g, '&lt;') + '</span>';
+    document.body.appendChild(msg);
+    if (labelEl) {
+      var rect = labelEl.getBoundingClientRect();
+      msg.style.top = (rect.top + rect.height / 2) + 'px';
+      msg.style.left = (rect.left + rect.width / 2) + 'px';
+    }
+    if (submitBtn) submitBtn.disabled = true;
+    setTimeout(function () {
+      if (msg.parentNode) msg.parentNode.removeChild(msg);
+      if (submitBtn) submitBtn.disabled = false;
+    }, 1000);
+  }
+
   function onSubmit() {
     if (!state.selectedDate || state.userName === '') return;
     var btn = document.getElementById('claims-submit-btn');
     if (!btn) return;
-    var originalText = btn.textContent;
+
+    if ((state.mySelection || []).length === 0) {
+      showInfoMessage('Nothing claimed', btn);
+      return;
+    }
+
+    var original = state.originalClaimsForUser || [];
+    var sel = state.mySelection || [];
+    var same = original.length === sel.length && sel.every(function (s) {
+      return original.some(function (e) { return e.rowIndex === s.rowIndex && e.unitIndex === s.unitIndex; });
+    });
+    if (same) {
+      showInfoMessage('Claim already recorded', btn);
+      return;
+    }
+
     btn.disabled = true;
-    btn.textContent = 'Processing…';
+    btn.classList.add('claims-submit-btn--processing');
+    var textEl = btn.querySelector('.claims-submit-btn__text');
+    if (textEl) textEl.textContent = 'Processing…';
     ClaimsAPI.submitClaims({
       date: state.selectedDate,
       userName: state.userName,
@@ -398,33 +581,34 @@
       state.claims = claims || [];
       state.claimMap = ClaimsState.buildClaimMap(state.claims);
       state.claimsCache[state.selectedDate] = { claims: claims, fetchedAt: Date.now() };
+      state.mySelection = ClaimsState.getMySelectionFromClaims(state.claims, state.userName);
+      state.originalClaimsForUser = state.mySelection.map(function (s) { return { rowIndex: s.rowIndex, unitIndex: s.unitIndex }; });
       renderBill();
       btn.disabled = false;
-      btn.textContent = originalText;
-      var successMount = document.getElementById('claims-success-mount');
-      if (successMount) {
-        successMount.innerHTML = '';
-        var msg = document.createElement('div');
-        msg.className = 'claims-message claims-message--success';
-        msg.textContent = 'Claims saved successfully!';
-        msg.setAttribute('role', 'status');
-        successMount.appendChild(msg);
-        setTimeout(function () {
-          if (msg.parentNode) msg.parentNode.removeChild(msg);
-        }, 3000);
-      }
+      btn.classList.remove('claims-submit-btn--processing');
+      var textEl = btn.querySelector('.claims-submit-btn__text');
+      if (textEl) textEl.textContent = 'Submit my claims';
+      var msg = document.createElement('div');
+      msg.className = 'claims-success-overlay';
+      msg.setAttribute('role', 'status');
+      msg.setAttribute('aria-live', 'polite');
+      msg.innerHTML = '<span class="claims-success-overlay__text">Claims saved successfully!</span>';
+      document.body.appendChild(msg);
+      setTimeout(function () {
+        if (msg.parentNode) msg.parentNode.removeChild(msg);
+      }, 3000);
     }).catch(function (err) {
       var msg = err.message || err;
       alert('Submit failed: ' + msg);
       btn.disabled = false;
-      btn.textContent = originalText;
+      btn.classList.remove('claims-submit-btn--processing');
+      var textEl = btn.querySelector('.claims-submit-btn__text');
+      if (textEl) textEl.textContent = 'Submit my claims';
       if (msg.indexOf('already claimed') >= 0 || msg.indexOf('slot') >= 0) {
         ClaimsAPI.getClaims(state.selectedDate).then(function (claims) {
           state.claims = claims || [];
           state.claimMap = ClaimsState.buildClaimMap(state.claims);
-          state.mySelection = (state.claims || []).filter(function (c) {
-            return String(c.userName || '') === String(state.userName);
-          }).map(function (c) { return { rowIndex: c.rowIndex, unitIndex: c.unitIndex }; });
+          state.mySelection = ClaimsState.getMySelectionFromClaims(state.claims, state.userName);
           state.claimsCache[state.selectedDate] = { claims: claims, fetchedAt: Date.now() };
           renderBill();
         }).catch(function () {});

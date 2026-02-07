@@ -96,6 +96,9 @@
           slotState === 'claimed-by-me' ? 'claimed-by-me' : 'claimed-by-other');
       btn.setAttribute('data-row', rowIndex);
       btn.setAttribute('data-unit', u);
+      if (slotState === 'claimed-by-other') {
+        btn.setAttribute('data-claimant', claimantName || 'someone else');
+      }
       var imgSrc = getImageSrc(category, description, productIcons);
       if (imgSrc) {
         var img = document.createElement('img');
@@ -118,6 +121,15 @@
           var r = parseInt(this.getAttribute('data-row'), 10);
           var uu = parseInt(this.getAttribute('data-unit'), 10);
           onSlotClick(r, uu);
+        });
+      } else if (!readOnly && slotState === 'claimed-by-other') {
+        btn.addEventListener('click', function () {
+          var r = parseInt(this.getAttribute('data-row'), 10);
+          var uu = parseInt(this.getAttribute('data-unit'), 10);
+          var claimant = this.getAttribute('data-claimant') || 'someone else';
+          if (options.onClaimedByOtherClick) {
+            options.onClaimedByOtherClick(r, uu, claimant, this);
+          }
         });
       } else if (readOnly) {
         btn.classList.add('claims-slot-btn--readonly');

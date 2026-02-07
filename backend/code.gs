@@ -8,8 +8,14 @@ var SHEETS = {
   CONFIG: 'Config',
   BILLS: 'Bills',
   CLAIMS: 'Claims',
-  PRODUCT_ICONS: 'ProductIcons'
+  PRODUCT_ICONS: 'ProductIcons',
+  BILL_META: 'BillMeta'
 };
+
+/** Run this once from the editor (Run > authorizeDrive) to grant Drive access, then deploy a new version of the Web App. */
+function authorizeDrive() {
+  DriveApp.getRootFolder().getName();
+}
 
 function doGet(e) {
   var result = { error: null, data: null };
@@ -30,6 +36,10 @@ function doGet(e) {
       result.data = getConfigNames();
     } else if (action === 'productIcons') {
       result.data = getProductIcons();
+    } else if (action === 'getBillImage') {
+      var date = params.date;
+      if (!date) throw new Error('Missing date');
+      result.data = getBillImage(date);
     } else {
       throw new Error('Unknown or missing action');
     }
@@ -66,41 +76,113 @@ function getSpreadsheet() {
 
 function getDatesWithBills() {
   var ss = getSpreadsheet();
-  var sheet = ss.getSheetByName(SHEETS.BILLS);
-  if (!sheet) return [];
-  var data = sheet.getDataRange().getValues();
+  var billsSheet = ss.getSheetByName(SHEETS.BILLS);
+  if (!billsSheet) return [];
+  var data = billsSheet.getDataRange().getValues();
   if (data.length < 2) return [];
   var header = data[0];
   var dateCol = header.indexOf('Date');
   if (dateCol < 0) return [];
-  var dates = {};
+  var dateSet = {};
   for (var i = 1; i < data.length; i++) {
     var val = data[i][dateCol];
     if (val) {
       var d = formatDate(val);
-      if (d) dates[d] = true;
+      if (d) dateSet[d] = true;
     }
   }
-  return Object.keys(dates).sort();
+  var dates = Object.keys(dateSet).sort();
+  var metaSheet = ss.getSheetByName(SHEETS.BILL_META);
+  var openByDate = {};
+  if (metaSheet) {
+    var metaData = metaSheet.getDataRange().getValues();
+    if (metaData.length >= 2) {
+      var metaHeader = metaData[0];
+      var metaDateCol = metaHeader.indexOf('Date');
+      var metaOpenCol = metaHeader.indexOf('Open');
+      if (metaDateCol >= 0 && metaOpenCol >= 0) {
+        for (var j = 1; j < metaData.length; j++) {
+          var row = metaData[j];
+          var dateStr = formatDate(row[metaDateCol]);
+          if (dateStr) {
+            var v = row[metaOpenCol];
+            openByDate[dateStr] = v === true || (typeof v === 'string' && v.toUpperCase() === 'TRUE');
+          }
+        }
+      }
+    }
+  }
+  var result = [];
+  for (var k = 0; k < dates.length; k++) {
+    result.push({ date: dates[k], open: openByDate[dates[k]] === true });
+  }
+  return result;
 }
 
 function formatDate(val) {
+  if (val == null || val === '') return null;
   if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(val)) return val;
   if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
     var y = val.getFullYear();
     var m = ('0' + (val.getMonth() + 1)).slice(-2);
     var d = ('0' + val.getDate()).slice(-2);
     return y + '-' + m + '-' + d;
   }
+  // Accept other string date formats (e.g. "07/02/2026", "2/7/2026") so imported/pasted dates are not dropped
+  if (typeof val === 'string') {
+    var parsed = new Date(val);
+    if (!isNaN(parsed.getTime())) {
+      var y = parsed.getFullYear();
+      var m = ('0' + (parsed.getMonth() + 1)).slice(-2);
+      var d = ('0' + parsed.getDate()).slice(-2);
+      return y + '-' + m + '-' + d;
+    }
+  }
   return null;
+}
+
+/** Extract Drive file ID from a cell value that may be a raw ID or a full URL/path. */
+function normalizeDriveFileId(val) {
+  if (val == null || String(val).trim() === '') return null;
+  var s = String(val).trim();
+  var match = s.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+  return s;
+}
+
+function getBillMetaForDate(dateStr) {
+  var ss = getSpreadsheet();
+  var sheet = ss.getSheetByName(SHEETS.BILL_META);
+  if (!sheet) return { billImageId: null, open: false };
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return { billImageId: null, open: false };
+  var header = data[0];
+  var dateCol = header.indexOf('Date');
+  var imageIdCol = header.indexOf('BillImageId');
+  var openCol = header.indexOf('Open');
+  if (dateCol < 0 || imageIdCol < 0) return { billImageId: null, open: false };
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    if (formatDate(row[dateCol]) === dateStr) {
+      var id = (row[imageIdCol] != null && String(row[imageIdCol]).trim() !== '') ? String(row[imageIdCol]).trim() : null;
+      var isOpen = false;
+      if (openCol >= 0 && row[openCol] != null) {
+        var v = row[openCol];
+        isOpen = v === true || (typeof v === 'string' && v.toUpperCase() === 'TRUE');
+      }
+      return { billImageId: id, open: isOpen };
+    }
+  }
+  return { billImageId: null, open: false };
 }
 
 function getBillForDate(date) {
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(SHEETS.BILLS);
-  if (!sheet) return { items: [], metadata: null };
+  if (!sheet) return { items: [], metadata: { billImageUrl: null } };
   var data = sheet.getDataRange().getValues();
-  if (data.length < 2) return { items: [], metadata: null };
+  if (data.length < 2) return { items: [], metadata: { billImageUrl: null } };
   var header = data[0];
   var col = function (name) { return header.indexOf(name); };
   var dateCol = col('Date');
@@ -110,9 +192,9 @@ function getBillForDate(date) {
   var qtyCol = col('Quantity');
   var unitPriceCol = col('UnitPrice');
   var totalPriceCol = col('TotalPrice');
-  if (dateCol < 0 || categoryCol < 0 || descCol < 0 || qtyCol < 0) return { items: [], metadata: null };
+  if (dateCol < 0 || categoryCol < 0 || descCol < 0 || qtyCol < 0) return { items: [], metadata: { billImageUrl: null } };
   var dateStr = formatDate(date);
-  if (!dateStr) return { items: [], metadata: null };
+  if (!dateStr) return { items: [], metadata: { billImageUrl: null } };
   var items = [];
   var runningIndex = 0;
   for (var i = 1; i < data.length; i++) {
@@ -130,7 +212,25 @@ function getBillForDate(date) {
       total_price: parseFloat(row[totalPriceCol]) || 0
     });
   }
-  return { items: items, metadata: null };
+  var meta = getBillMetaForDate(dateStr);
+  var fileId = normalizeDriveFileId(meta.billImageId);
+  var billImageUrl = fileId
+    ? ('https://drive.google.com/file/d/' + fileId + '/view')
+    : null;
+  return { items: items, metadata: { billImageUrl: billImageUrl } };
+}
+
+function getBillImage(date) {
+  var dateStr = formatDate(date);
+  if (!dateStr) throw new Error('Invalid date');
+  var meta = getBillMetaForDate(dateStr);
+  var fileId = normalizeDriveFileId(meta.billImageId);
+  if (!fileId) throw new Error('No bill image for this date');
+  var file = DriveApp.getFileById(fileId);
+  var blob = file.getBlob();
+  var mimeType = blob.getContentType() || 'image/jpeg';
+  var base64 = Utilities.base64Encode(blob.getBytes());
+  return { mimeType: mimeType, base64: base64 };
 }
 
 function getClaimsForDate(date) {
