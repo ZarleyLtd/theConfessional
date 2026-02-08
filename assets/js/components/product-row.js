@@ -62,6 +62,7 @@
 
   function render(options) {
     options = options || {};
+    var slots = options.slots;
     var rowIndex = options.rowIndex;
     var category = options.category || '';
     var description = options.description || '';
@@ -78,23 +79,38 @@
     wrap.className = 'claims-product-row';
     var label = document.createElement('div');
     label.className = 'claims-product-row__label';
-    label.textContent = description;
+    label.textContent = description + (slots && slots.length ? ' × ' + slots.length : '');
     wrap.appendChild(label);
     var strip = document.createElement('div');
     strip.className = 'claims-product-strip';
-    var unitIndices = displayOrder && displayOrder.length === quantity
-      ? displayOrder
-      : (function () { var a = []; for (var i = 0; i < quantity; i++) a.push(i); return a; })();
-    for (var i = 0; i < unitIndices.length; i++) {
-      var u = unitIndices[i];
-      var slotState = ClaimsState.getSlotState(claimMap, currentUser, rowIndex, u);
-      var claimantName = claimMap[ClaimsState.slotKey(rowIndex, u)];
+
+    var orderedSlots;
+    if (slots && slots.length > 0) {
+      /* Keep bill order so the button the user clicked stays in place (no re-sort by state). */
+      orderedSlots = slots.map(function (s) {
+        return { rowIndex: s.rowIndex, unitIndex: s.unitIndex, state: ClaimsState.getSlotState(claimMap, currentUser, s.rowIndex, s.unitIndex) };
+      });
+    } else {
+      var unitIndices = displayOrder && displayOrder.length === quantity
+        ? displayOrder
+        : (function () { var a = []; for (var i = 0; i < quantity; i++) a.push(i); return a; })();
+      orderedSlots = unitIndices.map(function (u) {
+        return { rowIndex: rowIndex, unitIndex: u, state: ClaimsState.getSlotState(claimMap, currentUser, rowIndex, u) };
+      });
+    }
+
+    for (var i = 0; i < orderedSlots.length; i++) {
+      var s = orderedSlots[i];
+      var r = s.rowIndex;
+      var u = s.unitIndex;
+      var slotState = s.state;
+      var claimantName = claimMap[ClaimsState.slotKey(r, u)];
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'claims-slot-btn ' +
         (slotState === 'available' ? 'available' :
           slotState === 'claimed-by-me' ? 'claimed-by-me' : 'claimed-by-other');
-      btn.setAttribute('data-row', rowIndex);
+      btn.setAttribute('data-row', r);
       btn.setAttribute('data-unit', u);
       if (slotState === 'claimed-by-other') {
         btn.setAttribute('data-claimant', claimantName || 'someone else');
@@ -118,17 +134,17 @@
       }
       if (!readOnly && (slotState === 'available' || slotState === 'claimed-by-me')) {
         btn.addEventListener('click', function () {
-          var r = parseInt(this.getAttribute('data-row'), 10);
+          var rr = parseInt(this.getAttribute('data-row'), 10);
           var uu = parseInt(this.getAttribute('data-unit'), 10);
-          onSlotClick(r, uu);
+          onSlotClick(rr, uu);
         });
       } else if (!readOnly && slotState === 'claimed-by-other') {
         btn.addEventListener('click', function () {
-          var r = parseInt(this.getAttribute('data-row'), 10);
+          var rr = parseInt(this.getAttribute('data-row'), 10);
           var uu = parseInt(this.getAttribute('data-unit'), 10);
           var claimant = this.getAttribute('data-claimant') || 'someone else';
           if (options.onClaimedByOtherClick) {
-            options.onClaimedByOtherClick(r, uu, claimant, this);
+            options.onClaimedByOtherClick(rr, uu, claimant, this);
           }
         });
       } else if (readOnly) {

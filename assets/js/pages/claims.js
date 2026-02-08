@@ -26,7 +26,9 @@
     productIconsFetchedAt: null,
     productsLoading: false,
     configNames: [],
-    originalClaimsForUser: []
+    originalClaimsForUser: [],
+    firstOpenBillPrefetchPromise: null,
+    consolidatedRowOrder: {}
   };
 
   function normalizeUserName(name) {
@@ -179,11 +181,15 @@
   function prefetchFirstOpenBill() {
     var split = getOpenAndHistoricalDates();
     var firstOpen = split.open[0];
-    if (firstOpen && !state.billCache[firstOpen]) {
-      ClaimsAPI.getBill(firstOpen).then(function (bill) {
-        state.billCache[firstOpen] = bill;
-      }).catch(function () {});
+    if (firstOpen && !state.billCache[firstOpen] && !state.firstOpenBillPrefetchPromise) {
+      state.firstOpenBillPrefetchPromise = ClaimsAPI.getBill(firstOpen)
+        .then(function (bill) {
+          state.billCache[firstOpen] = bill;
+          return bill;
+        })
+        .catch(function () {});
     }
+    return state.firstOpenBillPrefetchPromise;
   }
 
   function getOpenAndHistoricalDates() {
@@ -201,6 +207,29 @@
     openDates.sort();
     historicalDates.sort().reverse();
     return { open: openDates, historical: historicalDates };
+  }
+
+  /** Group bill items by description+category (bill order), one line per product with total quantity. */
+  function buildConsolidatedItems(bill) {
+    var items = (bill && bill.items) ? bill.items : [];
+    var seen = {};
+    var consolidated = [];
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var desc = (item.description || '').trim();
+      var cat = (item.category || '').trim();
+      var key = cat + '|' + desc;
+      var qty = Math.max(0, parseInt(item.quantity, 10) || 0);
+      var ri = item.rowIndex != null ? item.rowIndex : i;
+      if (!seen[key]) {
+        seen[key] = { description: desc, category: cat, slots: [] };
+        consolidated.push(seen[key]);
+      }
+      for (var u = 0; u < qty; u++) {
+        seen[key].slots.push({ rowIndex: ri, unitIndex: u });
+      }
+    }
+    return consolidated;
   }
 
   function renderBillList(containerId, dates, isHistorical, onSelect) {
@@ -264,14 +293,24 @@
     state.mySelection = [];
     state.originalClaimsForUser = [];
     state.claimMap = {};
+    state.consolidatedRowOrder = {};
     renderShell();
 
+    var split = getOpenAndHistoricalDates();
+    var isFirstOpen = split.open[0] === date;
     var billPromise = state.billCache[date]
       ? Promise.resolve(state.billCache[date])
-      : ClaimsAPI.getBill(date).then(function (bill) {
-          state.billCache[date] = bill;
-          return bill;
-        });
+      : (isFirstOpen && state.firstOpenBillPrefetchPromise
+          ? state.firstOpenBillPrefetchPromise.then(function () {
+              return state.billCache[date] || ClaimsAPI.getBill(date).then(function (bill) {
+                state.billCache[date] = bill;
+                return bill;
+              });
+            })
+          : ClaimsAPI.getBill(date).then(function (bill) {
+              state.billCache[date] = bill;
+              return bill;
+            }));
     var claimsPromise = !isClaimsStaleForDate(date) && state.claimsCache[date]
       ? Promise.resolve(state.claimsCache[date].claims)
       : ClaimsAPI.getClaims(date).then(function (claims) {
@@ -312,7 +351,8 @@
     var dateLabel = ClaimsFormatters.formatBillDateDisplay(state.selectedDate) || state.selectedDate || '';
     var html = '<div class="claims-hero-bg" aria-hidden="true"></div>';
     html += '<div class="claims-products-topbar">';
-    html += '<button type="button" class="claims-home-btn" id="claims-products-home-btn" aria-label="Home"><svg class="claims-home-btn__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></button>';
+    html += '<button type="button" class="claims-home-btn" id="claims-products-home-btn" aria-label="Home"><span class="claims-home-btn__icon-wrap"><svg class="claims-home-btn__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span><span class="claims-home-btn__label">Home</span></button>';
+    html += '<h1 class="claims-products-topbar__title">The Confessional</h1>';
     if (state.bill && state.bill.metadata && state.bill.metadata.billImageUrl && state.selectedDate) {
       html += '<button type="button" class="claims-view-bill-btn" id="claims-view-bill-btn" data-date="' + state.selectedDate + '" title="View original bill"><span class="claims-view-bill-btn__receipt"></span><span class="claims-view-bill-btn__label">View Bill</span></button>';
     } else {
@@ -330,6 +370,7 @@
       html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn"><span class="claims-submit-btn__text">Submit my claims</span><span class="claims-submit-btn__progress-wrap"><span class="claims-submit-btn__progress"></span></span></button>';
     }
     html += '</div></div></div>';
+    html += '<button type="button" class="claims-back-to-top hidden" id="claims-back-to-top" aria-label="Back to top"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>';
     rootEl.innerHTML = html;
     document.getElementById('claims-products-home-btn').addEventListener('click', goHome);
     var viewBillBtn = document.getElementById('claims-view-bill-btn');
@@ -341,6 +382,18 @@
     }
     if (!state.isReviewMode) {
       document.getElementById('claims-submit-btn').addEventListener('click', onSubmit);
+    }
+    var backToTopBtn = document.getElementById('claims-back-to-top');
+    if (backToTopBtn) {
+      backToTopBtn.addEventListener('click', function () {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+      var onScroll = function () {
+        backToTopBtn.classList.toggle('hidden', window.scrollY < 200);
+        requestAnimationFrame(function () {});
+      };
+      window.addEventListener('scroll', onScroll, { passive: true });
+      onScroll();
     }
     renderBill();
     updateDescriptiveLabel();
@@ -404,6 +457,33 @@
     }).catch(function () {});
   }
 
+  function getProductRowScrollPositions() {
+    var list = document.querySelectorAll('#claims-bill-mount .claims-product-row');
+    var pos = {};
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      var key = el.getAttribute('data-row-key');
+      if (key == null) continue;
+      var strip = el.querySelector('.claims-product-strip');
+      pos[key + '_row'] = el.scrollLeft || 0;
+      pos[key + '_strip'] = strip ? (strip.scrollLeft || 0) : 0;
+    }
+    return pos;
+  }
+
+  function setProductRowScrollPositions(pos) {
+    if (!pos || typeof pos !== 'object') return;
+    var list = document.querySelectorAll('#claims-bill-mount .claims-product-row');
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      var key = el.getAttribute('data-row-key');
+      if (key == null) continue;
+      var strip = el.querySelector('.claims-product-strip');
+      if (pos[key + '_row'] != null) el.scrollLeft = pos[key + '_row'];
+      if (strip && pos[key + '_strip'] != null) strip.scrollLeft = pos[key + '_strip'];
+    }
+  }
+
   function renderBill() {
     var mount = document.getElementById('claims-bill-mount');
     if (!mount) return;
@@ -412,42 +492,47 @@
       return;
     }
     var bill = state.bill || {};
-    var items = bill.items || [];
+    var scrollPos = getProductRowScrollPositions();
     mount.innerHTML = '';
-    state.displayOrderByRow = state.displayOrderByRow || {};
     var listEl = document.createElement('div');
     listEl.className = 'claims-products-list';
     mount.appendChild(listEl);
+    var consolidated = buildConsolidatedItems(bill);
     var stateOrder = { 'claimed-by-me': 0, 'available': 1, 'claimed-by-other': 2 };
-    items.forEach(function (item, idx) {
-      var ri = item.rowIndex;
-      var qty = item.quantity || 0;
-      if (!state.displayOrderByRow[ri]) {
-        var slotOrder = [];
-        for (var u = 0; u < qty; u++) {
-          var st = ClaimsState.getSlotState(state.claimMap, state.userName, ri, u);
-          slotOrder.push({ unitIndex: u, state: st });
-        }
-        slotOrder.sort(function (a, b) { return stateOrder[a.state] - stateOrder[b.state]; });
-        state.displayOrderByRow[ri] = slotOrder.map(function (x) { return x.unitIndex; });
+    for (var idx = 0; idx < consolidated.length; idx++) {
+      var group = consolidated[idx];
+      var rowKey = 'g' + idx;
+      var slotsToUse = group.slots;
+      if (state.consolidatedRowOrder[rowKey] && state.consolidatedRowOrder[rowKey].length === group.slots.length) {
+        slotsToUse = state.consolidatedRowOrder[rowKey];
+      } else {
+        var withState = group.slots.map(function (s) {
+          return { rowIndex: s.rowIndex, unitIndex: s.unitIndex, state: ClaimsState.getSlotState(state.claimMap, state.userName, s.rowIndex, s.unitIndex) };
+        });
+        withState.sort(function (a, b) { return stateOrder[a.state] - stateOrder[b.state]; });
+        slotsToUse = withState.map(function (x) { return { rowIndex: x.rowIndex, unitIndex: x.unitIndex }; });
+        state.consolidatedRowOrder[rowKey] = slotsToUse;
       }
       var rowEl = ProductRow.render({
-        rowIndex: item.rowIndex,
-        category: item.category,
-        description: item.description,
-        quantity: item.quantity,
+        slots: slotsToUse,
+        category: group.category,
+        description: group.description,
         currentUser: state.userName,
         claimMap: state.claimMap,
         mySelection: state.mySelection,
         productIcons: state.productIcons,
-        displayOrder: state.displayOrderByRow[ri],
         onSlotClick: state.isReviewMode ? undefined : function (rowIndex, unitIndex) { onSlotClick(rowIndex, unitIndex); },
         onClaimedByOtherClick: state.isReviewMode ? undefined : function (rowIndex, unitIndex, claimantName, buttonEl) {
           showClaimedByOtherMessage(claimantName, buttonEl);
         },
         readOnly: state.isReviewMode
       });
+      rowEl.setAttribute('data-row-key', rowKey);
       listEl.appendChild(rowEl);
+    }
+    setProductRowScrollPositions(scrollPos);
+    requestAnimationFrame(function () {
+      setProductRowScrollPositions(scrollPos);
     });
     updateDescriptiveLabel();
     var summaryMount = document.getElementById('claims-summary-mount');
@@ -478,20 +563,34 @@
     renderBill();
   }
 
+  function escapeHtml(str) {
+    if (str == null) return '';
+    var s = String(str);
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
   function updateDescriptiveLabel() {
     var el = document.getElementById('claims-descriptive-label');
     if (!el) return;
-    var parts = [];
-    var byDesc = {};
+    var consolidated = buildConsolidatedItems(state.bill);
+    var selSet = {};
     (state.mySelection || []).forEach(function (s) {
-      var item = (state.bill && state.bill.items) ? state.bill.items.find(function (i) { return i.rowIndex === s.rowIndex; }) : null;
-      var desc = item ? item.description : 'Item';
-      byDesc[desc] = (byDesc[desc] || 0) + 1;
+      var k = s.rowIndex + '_' + s.unitIndex;
+      selSet[k] = true;
     });
-    Object.keys(byDesc).sort().forEach(function (d) {
-      parts.push(byDesc[d] + ' ' + d);
-    });
-    el.textContent = 'Your selection: ' + (parts.length ? parts.join(', ') : '(none)');
+    var parts = [];
+    for (var i = 0; i < consolidated.length; i++) {
+      var group = consolidated[i];
+      var count = 0;
+      for (var j = 0; j < group.slots.length; j++) {
+        var slot = group.slots[j];
+        if (selSet[slot.rowIndex + '_' + slot.unitIndex]) count++;
+      }
+      if (count > 0) {
+        parts.push('<strong>' + escapeHtml(group.description) + '</strong> (' + count + ')');
+      }
+    }
+    el.innerHTML = 'Your selection: ' + (parts.length ? parts.join(', ') : '(none)');
   }
 
   function showClaimedByOtherMessage(claimantName, buttonEl) {
@@ -575,10 +674,15 @@
       date: state.selectedDate,
       userName: state.userName,
       claims: state.mySelection
-    }).then(function () {
-      return ClaimsAPI.getClaims(state.selectedDate);
+    }).then(function (data) {
+      var claims = (data && Array.isArray(data.claims)) ? data.claims : null;
+      if (claims == null) {
+        return ClaimsAPI.getClaims(state.selectedDate);
+      }
+      return claims;
     }).then(function (claims) {
-      state.claims = claims || [];
+      claims = claims || [];
+      state.claims = claims;
       state.claimMap = ClaimsState.buildClaimMap(state.claims);
       state.claimsCache[state.selectedDate] = { claims: claims, fetchedAt: Date.now() };
       state.mySelection = ClaimsState.getMySelectionFromClaims(state.claims, state.userName);
@@ -596,7 +700,7 @@
       document.body.appendChild(msg);
       setTimeout(function () {
         if (msg.parentNode) msg.parentNode.removeChild(msg);
-      }, 3000);
+      }, 1500);
     }).catch(function (err) {
       var msg = err.message || err;
       alert('Submit failed: ' + msg);

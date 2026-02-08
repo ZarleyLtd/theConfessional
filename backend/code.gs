@@ -388,5 +388,28 @@ function submitClaims(body) {
       parseInt(claims[k].unitIndex, 10)
     ]);
   }
-  return { ok: true, count: claims.length };
+
+  // Build updated claims list for this date (same shape as getClaimsForDate) so client can skip a second request
+  var updatedClaims = [];
+  for (var j = 1; j < claimsData.length; j++) {
+    var rowNum = j + 1;
+    if (toDelete.indexOf(rowNum) >= 0) continue;
+    var row = claimsData[j];
+    if (formatDate(row[cDateCol]) !== dateStr) continue;
+    updatedClaims.push({
+      date: formatDate(row[cDateCol]),
+      userName: String(row[cUserCol] || ''),
+      rowIndex: parseInt(row[cRowCol], 10) || 0,
+      unitIndex: parseInt(row[cUnitCol], 10) || 0
+    });
+  }
+  for (var k = 0; k < claims.length; k++) {
+    updatedClaims.push({
+      date: dateStr,
+      userName: String(userName),
+      rowIndex: parseInt(claims[k].rowIndex, 10),
+      unitIndex: parseInt(claims[k].unitIndex, 10)
+    });
+  }
+  return { ok: true, count: claims.length, claims: updatedClaims };
 }

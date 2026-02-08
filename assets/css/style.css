@@ -38,7 +38,7 @@ body {
 }
 
 .claims-initial-content .claims-modal__heading {
-  margin-top: 1.5rem;
+  margin-top: 1rem;
 }
 
 .claims-initial-content .claims-modal__heading + .claims-modal__heading {
@@ -59,7 +59,8 @@ body {
 
 .claims-hero {
   position: relative;
-  min-height: 35vh;
+  min-height: 20vh;
+  padding-top: 1.5rem;
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -68,11 +69,13 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .claims-hero--header-only {
   background: transparent;
+  min-height: 0;
+  padding-top: 0.75rem;
 }
 
 .claims-hero--header-only .claims-hero__overlay {
@@ -107,8 +110,12 @@ body {
   font-weight: 700;
   color: #f1f5f9;
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
-  margin: 0 0 1rem;
+  margin: 0;
+  padding-top: 1em;
+  padding-bottom: 1em;
   text-align: center;
+  line-height: 1.2;
+  box-sizing: border-box;
 }
 
 @media (min-width: 640px) {
@@ -117,41 +124,88 @@ body {
   }
 }
 
-/* ---------- Home button ---------- */
+/* ---------- Home button (matches View Bill size, aligned horizontally) ---------- */
 .claims-home-btn {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 0.25rem;
   padding: 0.5rem;
-  font-size: 0.875rem;
+  font-size: 0.75rem;
   font-weight: 500;
   color: #94a3b8;
-  background-color: rgba(30, 41, 59, 0.9);
-  border: 1px solid #475569;
-  border-radius: 0.5rem;
+  background: transparent;
+  border: none;
+  border-radius: 0.25rem;
   cursor: pointer;
-  transition: color 0.2s, background-color 0.2s;
+  transition: color 0.2s, transform 0.15s ease;
+  font: inherit;
+  text-decoration: none;
 }
 
 .claims-home-btn:hover {
   color: #f1f5f9;
+  transform: translateY(-2px);
+}
+
+.claims-home-btn__icon-wrap {
+  width: 2.5rem;
+  height: 3.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(30, 41, 59, 0.9);
+  border: 1px solid #475569;
+  border-radius: 0.25rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.claims-home-btn:hover .claims-home-btn__icon-wrap {
   background-color: #334155;
 }
 
 .claims-home-btn__icon {
-  width: 1.25rem;
-  height: 1.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
-/* Products view top bar (Home left, View original bill right); scrolls with page */
+.claims-home-btn__label {
+  color: #cbd5e1;
+  font-size: 0.6875rem;
+}
+
+.claims-home-btn:hover .claims-home-btn__label {
+  color: #f1f5f9;
+}
+
+/* Products view top bar: Home left, title center, View Bill right; same vertical position as opening page */
 .claims-products-topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
   margin-bottom: 1rem;
+  padding-top: 0.75rem;
   position: relative;
   z-index: 10;
+}
+.claims-products-topbar__title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: #f1f5f9;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  text-align: center;
+  pointer-events: none;
+  line-height: 1.2;
+}
+@media (min-width: 640px) {
+  .claims-products-topbar__title {
+    font-size: 2.625rem;
+  }
 }
 .claims-products-topbar__spacer {
   min-width: 1px;
@@ -350,7 +404,7 @@ body {
 }
 .claims-product-strip {
   display: flex;
-  overflow-x: auto;
+  overflow-x: visible;
   padding-bottom: 0.5rem;
   flex-wrap: nowrap;
   min-width: min-content;
@@ -696,6 +750,45 @@ body {
   to {
     width: 100%;
   }
+}
+
+/* ---------- Back to top ---------- */
+.claims-back-to-top {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1rem;
+  z-index: 100;
+  width: 3rem;
+  height: 3rem;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(30, 41, 59, 0.95);
+  border: 1px solid #475569;
+  border-radius: 50%;
+  color: #cbd5e1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transition: background-color 0.2s, color 0.2s, transform 0.2s;
+}
+
+.claims-back-to-top:hover {
+  background-color: #334155;
+  color: #f1f5f9;
+  transform: translateY(-2px);
+}
+
+.claims-back-to-top svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.claims-back-to-top.hidden {
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.2s, transform 0.2s;
 }
 
 @media (max-width: 640px) {
