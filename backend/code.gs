@@ -40,6 +40,8 @@ function doGet(e) {
       var date = params.date;
       if (!date) throw new Error('Missing date');
       result.data = getBillImage(date);
+    } else if (action === 'getAllBillsFull') {
+      result.data = getAllBillsFull();
     } else {
       throw new Error('Unknown or missing action');
     }
@@ -56,6 +58,10 @@ function doPost(e) {
     var action = body.action || (e.parameter && e.parameter.action);
     if (action === 'submitClaims') {
       result.data = submitClaims(body);
+    } else if (action === 'analyzeBillImage') {
+      result.data = analyzeBillImage(body);
+    } else if (action === 'completeBillUpload') {
+      result.data = completeBillUpload(body);
     } else {
       throw new Error('Unknown or missing action');
     }
@@ -261,6 +267,25 @@ function getClaimsForDate(date) {
   return claims;
 }
 
+/** Power user: return all bills with full items and claims in one call. */
+function getAllBillsFull() {
+  var dateItems = getDatesWithBills();
+  var bills = [];
+  for (var i = 0; i < dateItems.length; i++) {
+    var item = dateItems[i];
+    var dateStr = item.date;
+    var billData = getBillForDate(dateStr);
+    var claimsData = getClaimsForDate(dateStr);
+    bills.push({
+      date: dateStr,
+      open: item.open === true,
+      items: billData.items || [],
+      claims: claimsData || []
+    });
+  }
+  return { bills: bills };
+}
+
 function getConfigNames() {
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(SHEETS.CONFIG);
@@ -352,11 +377,12 @@ function submitClaims(body) {
   var cUnitCol = claimsHeader.indexOf('UnitIndex');
   if (cDateCol < 0 || cUserCol < 0 || cRowCol < 0 || cUnitCol < 0) throw new Error('Claims sheet missing columns');
 
+  var userNameLower = String(userName || '').toLowerCase();
   var claimedByOthers = {};
   for (var i = 1; i < claimsData.length; i++) {
     var row = claimsData[i];
     if (formatDate(row[cDateCol]) !== dateStr) continue;
-    if (String(row[cUserCol] || '') === String(userName)) continue;
+    if (String(row[cUserCol] || '').toLowerCase() === userNameLower) continue;
     var ri = parseInt(row[cRowCol], 10);
     var ui = parseInt(row[cUnitCol], 10);
     if (!isNaN(ri) && !isNaN(ui)) claimedByOthers[ri + '_' + ui] = true;
@@ -372,7 +398,7 @@ function submitClaims(body) {
 
   var toDelete = [];
   for (var j = 1; j < claimsData.length; j++) {
-    if (formatDate(claimsData[j][cDateCol]) === dateStr && String(claimsData[j][cUserCol] || '') === String(userName)) {
+    if (formatDate(claimsData[j][cDateCol]) === dateStr && String(claimsData[j][cUserCol] || '').toLowerCase() === userNameLower) {
       toDelete.push(j + 1);
     }
   }
@@ -412,4 +438,170 @@ function submitClaims(body) {
     });
   }
   return { ok: true, count: claims.length, claims: updatedClaims };
+}
+
+/**
+ * Power user: Phase 1 - analyze bill image with Gemini, store result, return jobId.
+ * body: { base64: string, mimeType: string }
+ */
+function analyzeBillImage(body) {
+  var base64 = body.base64;
+  var mimeType = body.mimeType || 'image/jpeg';
+  if (!base64) throw new Error('Missing image data');
+
+  var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!apiKey) throw new Error('GEMINI_API_KEY not set in script properties');
+
+  var prompt = 'Analyze this receipt/bill image and extract all line items. Return ONLY valid JSON (no markdown, no code blocks) with this exact structure: {"date":"YYYY-MM-DD","items":[{"category":"Food" or "Fries" or "Drink","description":"item name","quantity":1,"unit_price":12.00,"total_price":12.00}]}. Use category "Food" for main dishes/sandwiches, "Fries" for fries/sides, "Drink" for beverages. If you cannot determine the date, use today in YYYY-MM-DD.';
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + encodeURIComponent(apiKey);
+  var payload = {
+    contents: [{
+      parts: [
+        { inline_data: { mime_type: mimeType, data: base64 } },
+        { text: prompt }
+      ]
+    }]
+  };
+
+  var response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+  var code = response.getResponseCode();
+  var text = response.getContentText();
+  if (code !== 200) {
+    var err = JSON.parse(text || '{}');
+    throw new Error(err.error && err.error.message ? err.error.message : 'Gemini API error: ' + code);
+  }
+  var json = JSON.parse(text);
+  var textPart = json.candidates && json.candidates[0] && json.candidates[0].content && json.candidates[0].content.parts && json.candidates[0].content.parts[0];
+  var extractedText = textPart ? (textPart.text || '') : '';
+  if (!extractedText) throw new Error('No extraction result from Gemini');
+
+  var parsed = parseGeminiBillJson(extractedText);
+  var jobId = Utilities.getUuid();
+  PropertiesService.getScriptProperties().setProperty('billUpload_' + jobId, JSON.stringify(parsed));
+  return { jobId: jobId };
+}
+
+function parseGeminiBillJson(text) {
+  var cleaned = text.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1').replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+  var parsed = JSON.parse(cleaned);
+  if (!parsed.items || !Array.isArray(parsed.items)) parsed.items = [];
+  var dateStr = parsed.date && /^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date)) ? parsed.date : formatDate(new Date());
+  parsed.date = dateStr;
+  return parsed;
+}
+
+/**
+ * Power user: Phase 2 - complete upload using jobId + paidAmount.
+ * body: { jobId: string, paidAmount: number, base64: string, mimeType: string }
+ * (base64/mimeType required for TinyPNG - we need the original image)
+ */
+function completeBillUpload(body) {
+  var jobId = body.jobId;
+  var paidAmount = parseFloat(body.paidAmount);
+  var base64 = body.base64;
+  var mimeType = body.mimeType || 'image/jpeg';
+  if (!jobId) throw new Error('Missing jobId');
+  if (isNaN(paidAmount) || paidAmount < 0) throw new Error('Invalid paidAmount');
+
+  var stored = PropertiesService.getScriptProperties().getProperty('billUpload_' + jobId);
+  if (!stored) throw new Error('Analysis expired or invalid jobId');
+  var analysis = JSON.parse(stored);
+
+  var ss = getSpreadsheet();
+  var billsSheet = ss.getSheetByName(SHEETS.BILLS);
+  var metaSheet = ss.getSheetByName(SHEETS.BILL_META);
+  if (!billsSheet || !metaSheet) throw new Error('Bills or BillMeta sheet not found');
+
+  var dateStr = analysis.date || formatDate(new Date());
+  var imageBytes = base64 ? Utilities.base64Decode(base64) : null;
+
+  var fileId = null;
+  if (imageBytes && imageBytes.length > 0) {
+    var tinypngKey = PropertiesService.getScriptProperties().getProperty('TINYPNG_API_KEY');
+    var blob = Utilities.newBlob(imageBytes, mimeType, 'bill.jpg');
+    var compressedBlob = blob;
+    if (tinypngKey) {
+      try {
+        compressedBlob = compressWithTinyPNG(blob, tinypngKey);
+      } catch (e) {
+        compressedBlob = blob;
+      }
+    }
+    var folder = getOrCreateDriveFolder('theConfessional');
+    var fileName = 'bill-' + dateStr + '-' + Date.now() + '.jpg';
+    var file = folder.createFile(compressedBlob.setName(fileName));
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    fileId = file.getId();
+  }
+
+  var items = analysis.items || [];
+  var rowIndex = 0;
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var cat = (it.category || 'Drink').trim();
+    var desc = (it.description || '').trim();
+    var qty = parseInt(it.quantity, 10) || 1;
+    var unitPrice = parseFloat(it.unit_price) || 0;
+    var totalPrice = parseFloat(it.total_price) || (unitPrice * qty);
+    billsSheet.appendRow([dateStr, rowIndex, cat, desc, qty, unitPrice, totalPrice]);
+    rowIndex++;
+  }
+
+  var metaHeader = metaSheet.getRange(1, 1, 1, metaSheet.getLastColumn()).getValues()[0];
+  var hasTotalPaid = metaHeader.some(function (h) { return (h || '').toString().toLowerCase() === 'totalpaid'; });
+  if (!hasTotalPaid && metaSheet.getLastRow() === 1) {
+    metaSheet.getRange(1, 4).setValue('TotalPaid');
+  }
+  metaSheet.appendRow([dateStr, fileId || '', true, paidAmount]);
+
+  var billTotal = items.reduce(function (sum, it) {
+    var tp = parseFloat(it.total_price);
+    if (!isNaN(tp)) return sum + tp;
+    var up = parseFloat(it.unit_price) || 0;
+    var q = parseInt(it.quantity, 10) || 1;
+    return sum + up * q;
+  }, 0);
+  var tipAmount = Math.max(0, paidAmount - billTotal);
+
+  PropertiesService.getScriptProperties().deleteProperty('billUpload_' + jobId);
+  return {
+    date: dateStr,
+    billTotal: billTotal,
+    tipAmount: tipAmount,
+    totalPaid: paidAmount
+  };
+}
+
+function compressWithTinyPNG(blob, apiKey) {
+  var auth = Utilities.base64Encode('api:' + apiKey);
+  var shrinkRes = UrlFetchApp.fetch('https://api.tinify.com/shrink', {
+    method: 'post',
+    headers: { Authorization: 'Basic ' + auth },
+    payload: blob.getBytes(),
+    muteHttpExceptions: true
+  });
+  if (shrinkRes.getResponseCode() !== 201) {
+    throw new Error('TinyPNG shrink failed: ' + shrinkRes.getContentText());
+  }
+  var location = shrinkRes.getHeaders()['Location'];
+  if (!location) throw new Error('TinyPNG: no Location header');
+  var outputRes = UrlFetchApp.fetch(location, {
+    headers: { Authorization: 'Basic ' + auth },
+    muteHttpExceptions: true
+  });
+  if (outputRes.getResponseCode() !== 200) {
+    throw new Error('TinyPNG download failed');
+  }
+  return Utilities.newBlob(outputRes.getContent(), 'image/jpeg', 'bill.jpg');
+}
+
+function getOrCreateDriveFolder(name) {
+  var iter = DriveApp.getFoldersByName(name);
+  if (iter.hasNext()) return iter.next();
+  return DriveApp.getRootFolder().createFolder(name);
 }

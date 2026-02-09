@@ -44,7 +44,10 @@
     getConfigNames: function () { return get('config'); },
     getProductIcons: function () { return get('productIcons'); },
     getBillImage: function (date) { return get('getBillImage', { date: date }); },
-    submitClaims: function (payload) { return post('submitClaims', payload); }
+    submitClaims: function (payload) { return post('submitClaims', payload); },
+    getAllBillsFull: function () { return get('getAllBillsFull'); },
+    analyzeBillImage: function (payload) { return post('analyzeBillImage', payload); },
+    completeBillUpload: function (payload) { return post('completeBillUpload', payload); }
   };
 
   global.ClaimsAPI = api;

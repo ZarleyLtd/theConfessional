@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Confessional · God Mode</title>
+  <link href="assets/css/style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="app" class="app app--poweruser">
+    <div id="poweruser-root"></div>
+  </div>
+  <script src="assets/js/config/sheets-config.js"></script>
+  <script src="assets/js/utils/api.js"></script>
+  <script src="assets/js/utils/formatters.js"></script>
+  <script src="assets/js/utils/claims-state.js"></script>
+  <script src="assets/js/pages/poweruser.js"></script>
+  <script>
+    (function () {
+      if (typeof PowerUserPage !== 'undefined') {
+        PowerUserPage.init(document.getElementById('poweruser-root'));
+      }
+    })();
+  </script>
+</body>
+</html>
