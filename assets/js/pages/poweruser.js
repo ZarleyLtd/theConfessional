@@ -5,7 +5,41 @@
  */
 (function (global) {
   var rootEl;
-  var reviewState = { billsData: null, viewMode: 'byItem', expandedDate: null };
+  var reviewState = { billsData: null, viewModeByDate: {}, expandedDate: null, billCache: {}, billFetchPromises: {} };
+
+  function getViewModeForBill(dateStr) {
+    return reviewState.viewModeByDate[dateStr] || 'byItem';
+  }
+
+  function setViewModeForBill(dateStr, mode) {
+    reviewState.viewModeByDate[dateStr] = mode;
+  }
+
+  function ensureBillFull(dateStr) {
+    if (reviewState.billCache[dateStr]) return Promise.resolve(reviewState.billCache[dateStr]);
+    if (reviewState.billFetchPromises[dateStr]) return reviewState.billFetchPromises[dateStr];
+    var p = ClaimsAPI.getBillFull(dateStr).then(function (b) {
+      reviewState.billCache[dateStr] = b;
+      delete reviewState.billFetchPromises[dateStr];
+      return b;
+    });
+    reviewState.billFetchPromises[dateStr] = p;
+    return p;
+  }
+
+  function prefetchOpenBills() {
+    var bills = (reviewState.billsData && reviewState.billsData.bills) ? reviewState.billsData.bills : [];
+    for (var i = 0; i < bills.length; i++) {
+      if (bills[i].open === true) {
+        ensureBillFull(bills[i].date).then(function (bill) {
+          var list = document.getElementById('poweruser-bills-list');
+          if (list && reviewState.billsData && reviewState.expandedDate === bill.date) {
+            renderBillsList(list, reviewState.billsData.bills);
+          }
+        });
+      }
+    }
+  }
 
   function renderShell() {
     if (!rootEl) return;
@@ -70,8 +104,8 @@
     return consolidated;
   }
 
-  /** Get claimant summary for consolidated item: "John (1), Gary (2), Unclaimed (1)" */
-  function getClaimantSummary(slots, claimMap) {
+  /** Get claimant summary as array of lines: ["John (1)", "Gary (2)", "Unclaimed (1)"] */
+  function getClaimantLines(slots, claimMap) {
     var byUser = {};
     var unclaimed = 0;
     for (var i = 0; i < slots.length; i++) {
@@ -83,13 +117,13 @@
         byUser[name] = (byUser[name] || 0) + 1;
       }
     }
-    var parts = [];
+    var lines = [];
     var names = Object.keys(byUser).sort();
     for (var j = 0; j < names.length; j++) {
-      parts.push(names[j] + ' (' + byUser[names[j]] + ')');
+      lines.push(names[j] + ' (' + byUser[names[j]] + ')');
     }
-    if (unclaimed > 0) parts.push('Unclaimed (' + unclaimed + ')');
-    return parts.join(', ') || '—';
+    if (unclaimed > 0) lines.push('Unclaimed (' + unclaimed + ')');
+    return lines;
   }
 
   /** Check if any slot is unclaimed */
@@ -224,17 +258,18 @@
     if (!section) return;
     if (!section.classList.contains('poweruser-section--active')) return;
     section.innerHTML = '<p class="poweruser-loading">Loading bills…</p>';
-    if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.getAllBillsFull) {
-      ClaimsAPI.getAllBillsFull()
+    if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.getBillsSummary) {
+      ClaimsAPI.getBillsSummary()
         .then(function (data) {
           reviewState.billsData = data;
           renderBillReviewContent(section, data);
+          prefetchOpenBills();
         })
         .catch(function (err) {
           section.innerHTML = '<p class="poweruser-error">Failed to load bills: ' + (err.message || err) + '</p>';
         });
     } else {
-      section.innerHTML = '<p class="poweruser-error">API not available. Deploy backend with getAllBillsFull action.</p>';
+      section.innerHTML = '<p class="poweruser-error">API not available. Deploy backend with getBillsSummary action.</p>';
     }
   }
 
@@ -245,25 +280,7 @@
       return;
     }
 
-    var html = '<div class="poweruser-review-toolbar">';
-    html += '<button type="button" class="poweruser-toggle-view" id="poweruser-toggle-view">';
-    html += 'View: ' + (reviewState.viewMode === 'byItem' ? 'By Item' : 'By User');
-    html += '</button>';
-    html += '</div>';
-    html += '<div class="poweruser-bills-list" id="poweruser-bills-list"></div>';
-
-    section.innerHTML = html;
-
-    var toggleBtn = document.getElementById('poweruser-toggle-view');
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', function () {
-        reviewState.viewMode = reviewState.viewMode === 'byItem' ? 'byUser' : 'byItem';
-        toggleBtn.textContent = 'View: ' + (reviewState.viewMode === 'byItem' ? 'By Item' : 'By User');
-        var list = document.getElementById('poweruser-bills-list');
-        if (list) renderBillsList(list, bills);
-      });
-    }
-
+    section.innerHTML = '<div class="poweruser-bills-list" id="poweruser-bills-list"></div>';
     var list = document.getElementById('poweruser-bills-list');
     if (list) renderBillsList(list, bills);
   }
@@ -284,6 +301,8 @@
       block.className = 'poweruser-bill-block' + (isExpanded ? ' poweruser-bill-block--expanded' : '');
       block.setAttribute('data-date', dateStr);
 
+      var headerWrap = document.createElement('div');
+      headerWrap.className = 'poweruser-bill-header-wrap';
       var header = document.createElement('button');
       header.type = 'button';
       header.className = 'poweruser-bill-header';
@@ -296,69 +315,203 @@
         var list = document.getElementById('poweruser-bills-list');
         if (list && reviewState.billsData) renderBillsList(list, reviewState.billsData.bills);
       });
-      block.appendChild(header);
+      headerWrap.appendChild(header);
+
+      var headerActions = document.createElement('div');
+      headerActions.className = 'poweruser-bill-header-actions';
+      if (isExpanded) {
+        var viewMode = getViewModeForBill(dateStr);
+        var toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.className = 'poweruser-bill-toggle-view';
+        toggleBtn.textContent = 'View: ' + (viewMode === 'byItem' ? 'By Item' : 'By User');
+        toggleBtn.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
+          var next = getViewModeForBill(d) === 'byItem' ? 'byUser' : 'byItem';
+          setViewModeForBill(d, next);
+          this.textContent = 'View: ' + (next === 'byItem' ? 'By Item' : 'By User');
+          var list = document.getElementById('poweruser-bills-list');
+          if (list && reviewState.billsData) renderBillsList(list, reviewState.billsData.bills);
+        });
+        headerActions.appendChild(toggleBtn);
+      }
+
+      var hasNoClaims = bill.hasClaims === false;
+      if (hasNoClaims) {
+        var deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'poweruser-bill-delete';
+        deleteBtn.title = 'Delete this bill';
+        deleteBtn.innerHTML = 'Delete';
+        deleteBtn.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
+          if (!confirm('Delete this bill? This will remove all bill items, the BillMeta row, and the image file from Drive.')) return;
+          var list = document.getElementById('poweruser-bills-list');
+          if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.deleteBill) {
+            ClaimsAPI.deleteBill({ date: d })
+              .then(function () {
+                if (list && reviewState.billsData) {
+                  delete reviewState.billCache[d];
+                  delete reviewState.billFetchPromises[d];
+                  reviewState.billsData.bills = reviewState.billsData.bills.filter(function (b) { return b.date !== d; });
+                  renderBillsList(list, reviewState.billsData.bills);
+                }
+              })
+              .catch(function (err) {
+                alert('Delete failed: ' + (err.message || err));
+              });
+          }
+        });
+        headerActions.appendChild(deleteBtn);
+      }
+      if (headerActions.childNodes.length > 0) {
+        headerWrap.appendChild(headerActions);
+      }
+      block.appendChild(headerWrap);
 
       if (isExpanded) {
         var body = document.createElement('div');
         body.className = 'poweruser-bill-body';
+        var fullBill = reviewState.billCache[dateStr];
 
-        if (reviewState.viewMode === 'byItem') {
-          var claimMap = typeof ClaimsState !== 'undefined' && ClaimsState.buildClaimMap
-            ? ClaimsState.buildClaimMap(bill.claims) : {};
-          var consolidated = buildConsolidatedItems(bill);
-          for (var j = 0; j < consolidated.length; j++) {
-            var g = consolidated[j];
-            var qty = g.slots.length;
-            var lineTotal = (g.unitPrice * qty).toFixed(2);
-            var claimantStr = getClaimantSummary(g.slots, claimMap);
-            var unclaimed = hasUnclaimed(g.slots, claimMap);
-            var row = document.createElement('div');
-            row.className = 'poweruser-item-row' + (unclaimed ? ' poweruser-item-row--unclaimed' : '');
-            row.innerHTML = '<span class="poweruser-item-line">' + escapeHtml(g.description) + ' x' + qty + ' @ ' + formatNum(g.unitPrice) + ' €' + lineTotal + '</span>';
-            row.innerHTML += '<span class="poweruser-item-claimants">' + escapeHtml(claimantStr) + '</span>';
-            body.appendChild(row);
-          }
-        } else {
-          var byUser = buildByUserView(bill);
-          var users = Object.keys(byUser).sort();
-          for (var u = 0; u < users.length; u++) {
-            var userName = users[u];
-            var items = byUser[userName];
-            var userBlock = document.createElement('div');
-            userBlock.className = 'poweruser-user-block';
-            userBlock.innerHTML = '<div class="poweruser-user-name">' + escapeHtml(userName) + '</div>';
-            for (var k = 0; k < items.length; k++) {
-              var it = items[k];
-              userBlock.innerHTML += '<div class="poweruser-user-item">' + escapeHtml(it.description) + ' @ ' + formatNum(it.unitPrice) + ' €' + it.totalPrice.toFixed(2) + '</div>';
+        if (fullBill) {
+          if (getViewModeForBill(dateStr) === 'byItem') {
+            var claimMap = typeof ClaimsState !== 'undefined' && ClaimsState.buildClaimMap
+              ? ClaimsState.buildClaimMap(fullBill.claims) : {};
+            var consolidated = buildConsolidatedItems(fullBill);
+            for (var j = 0; j < consolidated.length; j++) {
+              var g = consolidated[j];
+              var qty = g.slots.length;
+              var lineTotal = (g.unitPrice * qty).toFixed(2);
+              var claimantLines = getClaimantLines(g.slots, claimMap);
+              var firstClaimant = claimantLines.length > 0 ? claimantLines[0] : null;
+              var remainingClaimants = claimantLines.length > 1 ? claimantLines.slice(1) : [];
+              var unclaimed = hasUnclaimed(g.slots, claimMap);
+              var row = document.createElement('div');
+              row.className = 'poweruser-item-row' + (unclaimed ? ' poweruser-item-row--unclaimed' : '');
+              var lineWrap = document.createElement('div');
+              lineWrap.className = 'poweruser-item-line-wrap';
+              var itemUnit = document.createElement('span');
+              itemUnit.className = 'poweruser-item-unit';
+              itemUnit.textContent = g.description + ' x' + qty + ' @ ' + formatNum(g.unitPrice);
+              var itemTotal = document.createElement('span');
+              itemTotal.className = 'poweruser-item-total';
+              itemTotal.textContent = '€' + lineTotal;
+              var lineRight = document.createElement('span');
+              lineRight.className = 'poweruser-item-claimant';
+              lineRight.textContent = firstClaimant || '';
+              var spacer = document.createElement('span');
+              spacer.className = 'poweruser-item-spacer';
+              lineWrap.appendChild(itemUnit);
+              lineWrap.appendChild(itemTotal);
+              lineWrap.appendChild(spacer);
+              lineWrap.appendChild(lineRight);
+              row.appendChild(lineWrap);
+              if (remainingClaimants.length > 0) {
+                var claimantsWrap = document.createElement('div');
+                claimantsWrap.className = 'poweruser-item-claimants';
+                for (var cl = 0; cl < remainingClaimants.length; cl++) {
+                  var clSpan = document.createElement('div');
+                  clSpan.className = 'poweruser-item-claimant-line';
+                  clSpan.textContent = remainingClaimants[cl];
+                  claimantsWrap.appendChild(clSpan);
+                }
+                row.appendChild(claimantsWrap);
+              }
+              body.appendChild(row);
             }
-            body.appendChild(userBlock);
-          }
-        }
-
-        var copyBtn = document.createElement('button');
-        copyBtn.type = 'button';
-        copyBtn.className = 'poweruser-copy-btn';
-        copyBtn.textContent = 'Copy to clipboard';
-        copyBtn.addEventListener('click', (function (billForCopy) {
-          return function () {
-          var txt = buildClipboardText(billForCopy);
-          if (!txt) {
-            alert('No claims to copy for this bill.');
-            return;
-          }
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(txt).then(function () {
-              copyBtn.textContent = 'Copied!';
-              setTimeout(function () { copyBtn.textContent = 'Copy to clipboard'; }, 1500);
-            }).catch(function () {
-              fallbackCopy(txt, copyBtn);
-            });
           } else {
-            fallbackCopy(txt, copyBtn);
+            var byUser = buildByUserView(fullBill);
+            var billTotal = (fullBill.items || []).reduce(function (s, it) {
+              return s + (parseFloat(it.total_price) || 0);
+            }, 0);
+            var totalPaid = fullBill.totalPaid != null ? parseFloat(fullBill.totalPaid) : null;
+            var tipAmount = (totalPaid != null && billTotal > 0 && totalPaid > billTotal)
+              ? totalPaid - billTotal : 0;
+            var users = Object.keys(byUser).sort();
+            for (var u = 0; u < users.length; u++) {
+              var userName = users[u];
+              var items = byUser[userName];
+              var userTotal = items.reduce(function (s, it) { return s + (it.totalPrice || 0); }, 0);
+              var userShare = billTotal > 0 ? userTotal / billTotal : 0;
+              var userTip = tipAmount * userShare;
+              var userTotalWithTip = userTotal + userTip;
+              var userBlock = document.createElement('div');
+              userBlock.className = 'poweruser-user-block';
+              var nameLine = document.createElement('div');
+              nameLine.className = 'poweruser-user-name-line';
+              var nameSpan = document.createElement('span');
+              nameSpan.className = 'poweruser-user-name';
+              nameSpan.textContent = userName;
+              nameLine.appendChild(nameSpan);
+              if (userTip > 0) {
+                var tipSpan = document.createElement('span');
+                tipSpan.className = 'poweruser-user-with-tip';
+                tipSpan.textContent = 'With tip: €' + userTotalWithTip.toFixed(2);
+                nameLine.appendChild(tipSpan);
+              }
+              var totalSpan = document.createElement('span');
+              totalSpan.className = 'poweruser-user-total';
+              totalSpan.textContent = '€' + userTotal.toFixed(2);
+              nameLine.appendChild(totalSpan);
+              userBlock.appendChild(nameLine);
+              for (var k = 0; k < items.length; k++) {
+                var it = items[k];
+                var itemRow = document.createElement('div');
+                itemRow.className = 'poweruser-user-item';
+                var itemLeft = document.createElement('span');
+                itemLeft.className = 'poweruser-user-item-desc';
+                itemLeft.textContent = it.description + ' @ ' + formatNum(it.unitPrice);
+                var itemRight = document.createElement('span');
+                itemRight.className = 'poweruser-user-item-price';
+                itemRight.textContent = '€' + it.totalPrice.toFixed(2);
+                itemRow.appendChild(itemLeft);
+                itemRow.appendChild(itemRight);
+                userBlock.appendChild(itemRow);
+              }
+              body.appendChild(userBlock);
+            }
           }
-          };
-        })(bill));
-        body.appendChild(copyBtn);
+
+          var copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.className = 'poweruser-copy-btn';
+          copyBtn.textContent = 'Clip for Bailey Bill';
+          copyBtn.addEventListener('click', (function (billForCopy) {
+            return function () {
+            var txt = buildClipboardText(billForCopy);
+            if (!txt) {
+              alert('No claims to copy for this bill.');
+              return;
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(txt).then(function () {
+                copyBtn.textContent = 'Clipped!';
+                setTimeout(function () { copyBtn.textContent = 'Clip for Bailey Bill'; }, 1500);
+              }).catch(function () {
+                fallbackCopy(txt, copyBtn);
+              });
+            } else {
+              fallbackCopy(txt, copyBtn);
+            }
+            };
+          })(fullBill));
+          body.appendChild(copyBtn);
+        } else {
+          body.innerHTML = '<p class="poweruser-loading">Loading…</p>';
+          (function (d) {
+            ensureBillFull(d).then(function () {
+              var list = document.getElementById('poweruser-bills-list');
+              if (list && reviewState.billsData && reviewState.expandedDate === d) {
+                renderBillsList(list, reviewState.billsData.bills);
+              }
+            });
+          })(dateStr);
+        }
         block.appendChild(body);
       }
 
@@ -375,12 +528,33 @@
     ta.select();
     try {
       document.execCommand('copy');
-      btn.textContent = 'Copied!';
-      setTimeout(function () { btn.textContent = 'Copy to clipboard'; }, 1500);
+      btn.textContent = 'Clipped!';
+      setTimeout(function () { btn.textContent = 'Clip for Bailey Bill'; }, 1500);
     } catch (e) {
       alert('Copy failed. Please select and copy manually.');
     }
     document.body.removeChild(ta);
+  }
+
+  function showErrorModal(message) {
+    var overlay = document.createElement('div');
+    overlay.className = 'poweruser-modal-overlay';
+    overlay.setAttribute('role', 'alertdialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Message');
+    overlay.innerHTML = '<div class="poweruser-modal poweruser-modal--error">' +
+      '<h3 class="poweruser-modal__title">Cannot upload bill</h3>' +
+      '<p class="poweruser-modal__message">' + escapeHtml(message) + '</p>' +
+      '<div class="poweruser-modal__actions">' +
+      '<button type="button" class="poweruser-modal__ok" id="poweruser-error-ok">OK</button>' +
+      '</div></div>';
+    document.body.appendChild(overlay);
+    document.getElementById('poweruser-error-ok').addEventListener('click', function () {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    });
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    });
   }
 
   function escapeHtml(str) {
@@ -438,7 +612,7 @@
     overlay.setAttribute('aria-label', 'Enter total paid');
     overlay.innerHTML = '<div class="poweruser-modal">' +
       '<h3 class="poweruser-modal__title">Enter total paid including tip (B+T)</h3>' +
-      '<p class="poweruser-modal__hint">Analyzing your bill in the background…</p>' +
+      '<p class="poweruser-modal__hint poweruser-modal__step" id="poweruser-step-hint">Step 1: Analyzing bill with AI (Gemini)...</p>' +
       '<input type="number" step="0.01" min="0" id="poweruser-paid-input" class="poweruser-modal__input" placeholder="e.g. 220.50">' +
       '<div class="poweruser-modal__actions">' +
       '<button type="button" class="poweruser-modal__cancel" id="poweruser-modal-cancel">Cancel</button>' +
@@ -465,37 +639,35 @@
       phase1Promise = Promise.reject(new Error('API not available'));
     }
 
+    var stepHint = document.getElementById('poweruser-step-hint');
+
     document.getElementById('poweruser-modal-submit').addEventListener('click', function () {
       var input = document.getElementById('poweruser-paid-input');
       var paidStr = input && input.value ? input.value.trim() : '';
       var paidAmount = parseFloat(paidStr);
       if (isNaN(paidAmount) || paidAmount < 0) {
-        alert('Please enter a valid amount.');
+        showErrorModal('Please enter a valid amount.');
         return;
       }
       var submitBtn = document.getElementById('poweruser-modal-submit');
       submitBtn.disabled = true;
       submitBtn.textContent = 'Processing…';
-      var hint = overlay.querySelector('.poweruser-modal__hint');
-      if (hint) hint.textContent = 'Completing upload…';
-
-      function doPhase2(jobId) {
-        if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.completeBillUpload) {
-          return Promise.reject(new Error('API not available'));
-        }
-        return ClaimsAPI.completeBillUpload({
-          jobId: jobId,
-          paidAmount: paidAmount,
-          base64: imageData.base64,
-          mimeType: imageData.mimeType
-        });
-      }
+      if (stepHint) stepHint.textContent = 'Step 1: Completing analysis and checking for duplicates...';
 
       phase1Promise
         .then(function (res) {
           var jobId = res && res.jobId;
           if (!jobId) throw new Error('No jobId from analysis');
-          return doPhase2(jobId);
+          if (stepHint) stepHint.textContent = 'Step 2: Saving to Drive and updating sheets...';
+          if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.completeBillUpload) {
+            return ClaimsAPI.completeBillUpload({
+              jobId: jobId,
+              paidAmount: paidAmount,
+              base64: imageData.base64,
+              mimeType: imageData.mimeType
+            });
+          }
+          throw new Error('API not available');
         })
         .then(function (result) {
           closeModal();
@@ -504,8 +676,9 @@
         .catch(function (err) {
           submitBtn.disabled = false;
           submitBtn.textContent = 'Submit';
-          if (hint) hint.textContent = 'Analyzing your bill in the background…';
-          alert('Upload failed: ' + (err.message || err));
+          if (stepHint) stepHint.textContent = 'Step 1: Analyzing bill with AI (Gemini)...';
+          closeModal();
+          showErrorModal(err.message || 'Upload failed');
         });
     });
   }

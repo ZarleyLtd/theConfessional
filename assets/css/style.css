@@ -888,11 +888,18 @@ body {
   border-radius: 0.5rem;
   overflow: hidden;
 }
+.poweruser-bill-header-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
 .poweruser-bill-header {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 0.75rem 1rem;
   text-align: left;
   background: transparent;
@@ -905,6 +912,46 @@ body {
 }
 .poweruser-bill-header:hover {
   background: rgba(51, 65, 85, 0.5);
+}
+.poweruser-bill-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  padding-right: 0.5rem;
+}
+.poweruser-bill-toggle-view {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #94a3b8;
+  background: transparent;
+  border: 1px solid #64748b;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.2s, color 0.2s;
+}
+.poweruser-bill-toggle-view:hover {
+  background: rgba(100, 116, 139, 0.2);
+  color: #cbd5e1;
+}
+.poweruser-bill-delete {
+  flex-shrink: 0;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #fca5a5;
+  background: transparent;
+  border: 1px solid #f87171;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.2s, color 0.2s;
+}
+.poweruser-bill-delete:hover {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fecaca;
 }
 .poweruser-bill-header__icon {
   font-size: 0.75rem;
@@ -933,8 +980,8 @@ body {
 }
 .poweruser-item-row {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  gap: 0.25rem;
   padding: 0.5rem 0;
   border-bottom: 1px solid #334155;
   font-size: 0.9375rem;
@@ -949,12 +996,39 @@ body {
   padding-right: 0.5rem;
   margin: 0 -0.5rem;
 }
-.poweruser-item-line {
+.poweruser-item-line-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+}
+.poweruser-item-unit {
+  flex: 0 1 auto;
+  min-width: 0;
   color: #e2e8f0;
+}
+.poweruser-item-total {
+  flex-shrink: 0;
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+}
+.poweruser-item-spacer {
+  flex: 1;
+  min-width: 1rem;
+}
+.poweruser-item-claimant {
+  color: #94a3b8;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+  text-align: right;
 }
 .poweruser-item-claimants {
   color: #94a3b8;
   font-size: 0.875rem;
+  text-align: right;
+  padding-left: 1rem;
+}
+.poweruser-item-claimant-line {
+  line-height: 1.4;
 }
 .poweruser-user-block {
   padding: 0.75rem 0;
@@ -963,16 +1037,49 @@ body {
 .poweruser-user-block:last-of-type {
   border-bottom: none;
 }
+.poweruser-user-name-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1rem;
+}
 .poweruser-user-name {
   font-weight: 600;
   color: #f1f5f9;
-  margin-bottom: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+.poweruser-user-with-tip {
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+.poweruser-user-total {
+  flex-shrink: 0;
+  width: 4.5rem;
+  text-align: right;
+  font-size: 0.9375rem;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
 }
 .poweruser-user-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
   font-size: 0.9375rem;
   color: #cbd5e1;
   padding-left: 1rem;
   margin-bottom: 0.25rem;
+}
+.poweruser-user-item-desc {
+  min-width: 0;
+}
+.poweruser-user-item-price {
+  flex-shrink: 0;
+  width: 4.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 .poweruser-copy-btn {
   margin-top: 1rem;
@@ -1103,6 +1210,35 @@ body {
 .poweruser-modal__submit:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+.poweruser-modal--error .poweruser-modal__title {
+  color: #fca5a5;
+}
+.poweruser-modal__message {
+  margin: 0 0 1rem;
+  font-size: 0.9375rem;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+.poweruser-modal__ok {
+  padding: 0.5rem 1rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-family: inherit;
+  background: #475569;
+  border: none;
+  color: #f1f5f9;
+}
+.poweruser-modal__ok:hover {
+  background: #64748b;
+}
+.poweruser-bt-form .poweruser-modal__input {
+  margin-bottom: 1rem;
+}
+.poweruser-modal__actions--analyzing {
+  margin-top: 1rem;
 }
 .poweruser-success-box {
   background: rgba(34, 197, 94, 0.1);

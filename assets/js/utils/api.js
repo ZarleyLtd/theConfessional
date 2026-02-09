@@ -46,8 +46,11 @@
     getBillImage: function (date) { return get('getBillImage', { date: date }); },
     submitClaims: function (payload) { return post('submitClaims', payload); },
     getAllBillsFull: function () { return get('getAllBillsFull'); },
+    getBillsSummary: function () { return get('getBillsSummary'); },
+    getBillFull: function (date) { return get('getBillFull', { date: date }); },
     analyzeBillImage: function (payload) { return post('analyzeBillImage', payload); },
-    completeBillUpload: function (payload) { return post('completeBillUpload', payload); }
+    completeBillUpload: function (payload) { return post('completeBillUpload', payload); },
+    deleteBill: function (payload) { return post('deleteBill', payload); }
   };
 
   global.ClaimsAPI = api;
