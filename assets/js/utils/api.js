@@ -50,7 +50,8 @@
     getBillFull: function (date) { return get('getBillFull', { date: date }); },
     analyzeBillImage: function (payload) { return post('analyzeBillImage', payload); },
     completeBillUpload: function (payload) { return post('completeBillUpload', payload); },
-    deleteBill: function (payload) { return post('deleteBill', payload); }
+    deleteBill: function (payload) { return post('deleteBill', payload); },
+    setBillOpen: function (payload) { return post('setBillOpen', payload); }
   };
 
   global.ClaimsAPI = api;

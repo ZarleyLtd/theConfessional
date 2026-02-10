@@ -5,7 +5,7 @@
  */
 (function (global) {
   var rootEl;
-  var reviewState = { billsData: null, viewModeByDate: {}, expandedDate: null, billCache: {}, billFetchPromises: {} };
+  var reviewState = { billsData: null, viewModeByDate: {}, expandedDate: null, billCache: {}, billFetchPromises: {}, billImageCache: {} };
 
   function getViewModeForBill(dateStr) {
     return reviewState.viewModeByDate[dateStr] || 'byItem';
@@ -25,6 +25,18 @@
     });
     reviewState.billFetchPromises[dateStr] = p;
     return p;
+  }
+
+  function prefetchBillImage(dateStr) {
+    if (!dateStr || reviewState.billImageCache[dateStr]) return;
+    if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getBillImage) return;
+    ClaimsAPI.getBillImage(dateStr)
+      .then(function (data) {
+        if (data && data.mimeType && data.base64) {
+          reviewState.billImageCache[dateStr] = 'data:' + data.mimeType + ';base64,' + data.base64;
+        }
+      })
+      .catch(function () {});
   }
 
   function prefetchOpenBills() {
@@ -47,36 +59,36 @@
     html += '<div class="claims-products-wrap">';
     html += '<div class="claims-hero claims-hero--header-only claims-hero--godmode">';
     html += '<div class="claims-hero__overlay"></div>';
-    html += '<h1 class="claims-hero__title">The Confessional <span class="claims-hero__god-icon" aria-hidden="true">⚡</span> God Mode</h1>';
+    html += '<div class="claims-hero__godmode-wrap">';
+    html += '<h1 class="claims-hero__title">The Confessional</h1>';
+    html += '<div class="claims-hero__god-icon-line"><span class="claims-hero__god-icon" aria-hidden="true">⚡</span></div>';
+    html += '<div class="claims-hero__god-mode-line">God Mode</div>';
+    html += '</div>';
     html += '</div>';
     html += '<div class="poweruser-content">';
-    html += '<nav class="poweruser-tabs">';
-    html += '<button type="button" class="poweruser-tab poweruser-tab--active" data-tab="review">Bill Review</button>';
-    html += '<button type="button" class="poweruser-tab" data-tab="upload">Upload New Bill</button>';
-    html += '</nav>';
-    html += '<section id="poweruser-review" class="poweruser-section poweruser-section--active"></section>';
-    html += '<section id="poweruser-upload" class="poweruser-section"></section>';
+    html += '<div class="poweruser-main-wrap">';
+    html += '<section id="poweruser-review" class="poweruser-section poweruser-section--active">';
+    html += '<div class="poweruser-add-bar"><button type="button" class="poweruser-add-bill" id="poweruser-add-bill" title="Upload new bill" aria-label="Upload new bill">+</button></div>';
+    html += '<div id="poweruser-upload-inline" class="poweruser-upload-inline"></div>';
+    html += '<div id="poweruser-review-list"></div>';
+    html += '</section>';
+    html += '</div>';
     html += '</div></div>';
     rootEl.innerHTML = html;
 
-    var tabs = rootEl.querySelectorAll('.poweruser-tab');
-    for (var i = 0; i < tabs.length; i++) {
-      tabs[i].addEventListener('click', function () {
-        var tab = this.getAttribute('data-tab');
-        var allTabs = rootEl.querySelectorAll('.poweruser-tab');
-        for (var t = 0; t < allTabs.length; t++) allTabs[t].classList.remove('poweruser-tab--active');
-        var allSections = rootEl.querySelectorAll('.poweruser-section');
-        for (var s = 0; s < allSections.length; s++) allSections[s].classList.remove('poweruser-section--active');
-        this.classList.add('poweruser-tab--active');
-        var section = document.getElementById('poweruser-' + tab);
-        if (section) section.classList.add('poweruser-section--active');
-        if (tab === 'review') renderBillReview();
-        if (tab === 'upload') renderBillUpload();
+    var addBtn = document.getElementById('poweruser-add-bill');
+    if (addBtn) {
+      addBtn.addEventListener('click', function () {
+        var uploadSection = document.getElementById('poweruser-upload-inline');
+        if (!uploadSection) return;
+        var isOpen = uploadSection.classList.toggle('poweruser-upload-inline--open');
+        if (isOpen) {
+          renderBillUpload();
+        }
       });
     }
 
     renderBillReview();
-    renderBillUpload();
   }
 
   /** Group bill items by description+category (bill order), one line per product with slots. */
@@ -133,6 +145,18 @@
       if (!claimMap[k] || String(claimMap[k]).trim() === '') return true;
     }
     return false;
+  }
+
+  /** True if bill has at least one item and every slot is claimed (for padlock visibility). */
+  function billHasAllClaimed(fullBill) {
+    if (!fullBill || !fullBill.items || fullBill.items.length === 0) return false;
+    var claimMap = typeof ClaimsState !== 'undefined' && ClaimsState.buildClaimMap
+      ? ClaimsState.buildClaimMap(fullBill.claims) : {};
+    var consolidated = buildConsolidatedItems(fullBill);
+    for (var j = 0; j < consolidated.length; j++) {
+      if (hasUnclaimed(consolidated[j].slots, claimMap)) return false;
+    }
+    return true;
   }
 
   /** Category for clipboard: food, fries, drinks */
@@ -254,33 +278,32 @@
   }
 
   function renderBillReview() {
-    var section = document.getElementById('poweruser-review');
-    if (!section) return;
-    if (!section.classList.contains('poweruser-section--active')) return;
-    section.innerHTML = '<p class="poweruser-loading">Loading bills…</p>';
+    var listContainer = document.getElementById('poweruser-review-list');
+    if (!listContainer) return;
+    listContainer.innerHTML = '<p class="poweruser-loading">Loading bills…</p>';
     if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.getBillsSummary) {
       ClaimsAPI.getBillsSummary()
         .then(function (data) {
           reviewState.billsData = data;
-          renderBillReviewContent(section, data);
+          renderBillReviewContent(listContainer, data);
           prefetchOpenBills();
         })
         .catch(function (err) {
-          section.innerHTML = '<p class="poweruser-error">Failed to load bills: ' + (err.message || err) + '</p>';
+          listContainer.innerHTML = '<p class="poweruser-error">Failed to load bills: ' + (err.message || err) + '</p>';
         });
     } else {
-      section.innerHTML = '<p class="poweruser-error">API not available. Deploy backend with getBillsSummary action.</p>';
+      listContainer.innerHTML = '<p class="poweruser-error">API not available. Deploy backend with getBillsSummary action.</p>';
     }
   }
 
-  function renderBillReviewContent(section, data) {
+  function renderBillReviewContent(listContainer, data) {
     var bills = (data && data.bills) ? data.bills : [];
     if (bills.length === 0) {
-      section.innerHTML = '<p class="poweruser-placeholder">No bills found.</p>';
+      listContainer.innerHTML = '<p class="poweruser-placeholder">No bills found.</p>';
       return;
     }
 
-    section.innerHTML = '<div class="poweruser-bills-list" id="poweruser-bills-list"></div>';
+    listContainer.innerHTML = '<div class="poweruser-bills-list" id="poweruser-bills-list"></div>';
     var list = document.getElementById('poweruser-bills-list');
     if (list) renderBillsList(list, bills);
   }
@@ -296,6 +319,9 @@
         ? ClaimsFormatters.formatBillDateDisplay(dateStr) : dateStr;
       var isOpen = bill.open === true;
       var isExpanded = reviewState.expandedDate === dateStr;
+      if (isExpanded) prefetchBillImage(dateStr);
+      var fullBill = reviewState.billCache[dateStr];
+      var allClaimed = bill.allClaimed === true || (fullBill && billHasAllClaimed(fullBill));
 
       var block = document.createElement('div');
       block.className = 'poweruser-bill-block' + (isExpanded ? ' poweruser-bill-block--expanded' : '');
@@ -308,7 +334,6 @@
       header.className = 'poweruser-bill-header';
       header.innerHTML = '<span class="poweruser-bill-header__icon">' + (isExpanded ? '▼' : '▶') + '</span>';
       header.innerHTML += '<span class="poweruser-bill-header__date">' + escapeHtml(dateLabel) + '</span>';
-      header.innerHTML += '<span class="poweruser-bill-badge poweruser-bill-badge--' + (isOpen ? 'open' : 'closed') + '">' + (isOpen ? 'Open' : 'Closed') + '</span>';
       header.addEventListener('click', function () {
         var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
         reviewState.expandedDate = reviewState.expandedDate === d ? null : d;
@@ -316,6 +341,52 @@
         if (list && reviewState.billsData) renderBillsList(list, reviewState.billsData.bills);
       });
       headerWrap.appendChild(header);
+
+      var headerRight = document.createElement('div');
+      headerRight.className = 'poweruser-bill-header-right';
+      if (allClaimed) {
+        var padlockBtn = document.createElement('button');
+        padlockBtn.type = 'button';
+        padlockBtn.className = 'poweruser-bill-padlock';
+        padlockBtn.title = isOpen ? 'Click to close bill' : 'Click to open bill';
+        padlockBtn.setAttribute('aria-label', isOpen ? 'Close bill' : 'Open bill');
+        var lockedSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+        var unlockedSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11L7 5Q7 2 12 2Q17 2 17 5L19 9"/></svg>';
+        padlockBtn.innerHTML = isOpen ? unlockedSvg : lockedSvg;
+        padlockBtn.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
+          var list = document.getElementById('poweruser-bills-list');
+          if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.setBillOpen && list && reviewState.billsData) {
+            var btn = this;
+            var workingEl = document.createElement('span');
+            workingEl.className = 'poweruser-bill-working';
+            workingEl.textContent = 'Working';
+            btn.parentNode.insertBefore(workingEl, btn);
+            btn.disabled = true;
+            var billToUpdate = reviewState.billsData.bills.filter(function (b) { return b.date === d; })[0];
+            var newOpen = !(billToUpdate && billToUpdate.open === true);
+            ClaimsAPI.setBillOpen({ date: d, open: newOpen })
+              .then(function () {
+                if (billToUpdate) billToUpdate.open = newOpen;
+                if (reviewState.billCache[d]) reviewState.billCache[d].open = newOpen;
+                renderBillsList(list, reviewState.billsData.bills);
+              })
+              .catch(function (err) {
+                if (workingEl.parentNode) workingEl.parentNode.removeChild(workingEl);
+                btn.disabled = false;
+                alert('Failed to update: ' + (err.message || err));
+              });
+          }
+        });
+        headerRight.appendChild(padlockBtn);
+      }
+      var badge = document.createElement('span');
+      badge.className = 'poweruser-bill-badge poweruser-bill-badge--' + (isOpen ? 'open' : 'closed');
+      badge.textContent = isOpen ? 'Open' : 'Closed';
+      headerRight.appendChild(badge);
+      headerWrap.appendChild(headerRight);
 
       var headerActions = document.createElement('div');
       headerActions.className = 'poweruser-bill-header-actions';
@@ -379,6 +450,13 @@
         var fullBill = reviewState.billCache[dateStr];
 
         if (fullBill) {
+          var billTotal = (fullBill.items || []).reduce(function (s, it) {
+            return s + (parseFloat(it.total_price) || 0);
+          }, 0);
+          var totalPaid = fullBill.totalPaid != null ? parseFloat(fullBill.totalPaid) : null;
+          var tipAmount = (totalPaid != null && billTotal > 0 && totalPaid > billTotal)
+            ? totalPaid - billTotal : 0;
+
           if (getViewModeForBill(dateStr) === 'byItem') {
             var claimMap = typeof ClaimsState !== 'undefined' && ClaimsState.buildClaimMap
               ? ClaimsState.buildClaimMap(fullBill.claims) : {};
@@ -388,8 +466,6 @@
               var qty = g.slots.length;
               var lineTotal = (g.unitPrice * qty).toFixed(2);
               var claimantLines = getClaimantLines(g.slots, claimMap);
-              var firstClaimant = claimantLines.length > 0 ? claimantLines[0] : null;
-              var remainingClaimants = claimantLines.length > 1 ? claimantLines.slice(1) : [];
               var unclaimed = hasUnclaimed(g.slots, claimMap);
               var row = document.createElement('div');
               row.className = 'poweruser-item-row' + (unclaimed ? ' poweruser-item-row--unclaimed' : '');
@@ -398,40 +474,34 @@
               var itemUnit = document.createElement('span');
               itemUnit.className = 'poweruser-item-unit';
               itemUnit.textContent = g.description + ' x' + qty + ' @ ' + formatNum(g.unitPrice);
+              var spacer = document.createElement('span');
+              spacer.className = 'poweruser-item-spacer';
               var itemTotal = document.createElement('span');
               itemTotal.className = 'poweruser-item-total';
               itemTotal.textContent = '€' + lineTotal;
-              var lineRight = document.createElement('span');
-              lineRight.className = 'poweruser-item-claimant';
-              lineRight.textContent = firstClaimant || '';
-              var spacer = document.createElement('span');
-              spacer.className = 'poweruser-item-spacer';
               lineWrap.appendChild(itemUnit);
-              lineWrap.appendChild(itemTotal);
               lineWrap.appendChild(spacer);
-              lineWrap.appendChild(lineRight);
+              lineWrap.appendChild(itemTotal);
               row.appendChild(lineWrap);
-              if (remainingClaimants.length > 0) {
+              if (claimantLines.length > 0) {
                 var claimantsWrap = document.createElement('div');
                 claimantsWrap.className = 'poweruser-item-claimants';
-                for (var cl = 0; cl < remainingClaimants.length; cl++) {
+                for (var cl = 0; cl < claimantLines.length; cl++) {
                   var clSpan = document.createElement('div');
                   clSpan.className = 'poweruser-item-claimant-line';
-                  clSpan.textContent = remainingClaimants[cl];
+                  clSpan.textContent = claimantLines[cl];
                   claimantsWrap.appendChild(clSpan);
                 }
                 row.appendChild(claimantsWrap);
               }
               body.appendChild(row);
             }
+            var byItemSummary = document.createElement('div');
+            byItemSummary.className = 'poweruser-bill-summary';
+            byItemSummary.innerHTML = '<div class="poweruser-bill-summary-row"><span class="poweruser-bill-summary-label">Total:</span><span class="poweruser-bill-summary-value">€' + formatNum(billTotal) + '</span></div><div class="poweruser-bill-summary-row"><span class="poweruser-bill-summary-label">Tip:</span><span class="poweruser-bill-summary-value">€' + formatNum(tipAmount) + '</span></div><div class="poweruser-bill-summary-row"><span class="poweruser-bill-summary-label">Total Paid:</span><span class="poweruser-bill-summary-value">€' + formatNum(totalPaid != null ? totalPaid : billTotal + tipAmount) + '</span></div>';
+            var billSummaryEl = byItemSummary;
           } else {
             var byUser = buildByUserView(fullBill);
-            var billTotal = (fullBill.items || []).reduce(function (s, it) {
-              return s + (parseFloat(it.total_price) || 0);
-            }, 0);
-            var totalPaid = fullBill.totalPaid != null ? parseFloat(fullBill.totalPaid) : null;
-            var tipAmount = (totalPaid != null && billTotal > 0 && totalPaid > billTotal)
-              ? totalPaid - billTotal : 0;
             var users = Object.keys(byUser).sort();
             for (var u = 0; u < users.length; u++) {
               var userName = users[u];
@@ -475,8 +545,14 @@
               }
               body.appendChild(userBlock);
             }
+            var byUserSummary = document.createElement('div');
+            byUserSummary.className = 'poweruser-bill-summary';
+            byUserSummary.innerHTML = '<div class="poweruser-bill-summary-row"><span class="poweruser-bill-summary-label">Total:</span><span class="poweruser-bill-summary-value">€' + formatNum(billTotal) + '</span></div><div class="poweruser-bill-summary-row"><span class="poweruser-bill-summary-label">Tip:</span><span class="poweruser-bill-summary-value">€' + formatNum(tipAmount) + '</span></div><div class="poweruser-bill-summary-row"><span class="poweruser-bill-summary-label">Total Paid:</span><span class="poweruser-bill-summary-value">€' + formatNum(totalPaid != null ? totalPaid : billTotal + tipAmount) + '</span></div>';
+            billSummaryEl = byUserSummary;
           }
 
+          var actionsWrap = document.createElement('div');
+          actionsWrap.className = 'poweruser-bill-actions';
           var copyBtn = document.createElement('button');
           copyBtn.type = 'button';
           copyBtn.className = 'poweruser-copy-btn';
@@ -500,7 +576,22 @@
             }
             };
           })(fullBill));
-          body.appendChild(copyBtn);
+          actionsWrap.appendChild(copyBtn);
+          var viewBillBtn = document.createElement('button');
+          viewBillBtn.type = 'button';
+          viewBillBtn.className = 'claims-view-bill-btn';
+          viewBillBtn.setAttribute('data-date', dateStr);
+          viewBillBtn.title = 'View original bill';
+          viewBillBtn.innerHTML = '<span class="claims-view-bill-btn__receipt"></span><span class="claims-view-bill-btn__label">View Bill</span>';
+          viewBillBtn.addEventListener('click', (function (d) {
+            return function () { openBillImageLightbox(d); };
+          })(dateStr));
+          actionsWrap.appendChild(viewBillBtn);
+          var summaryActionsWrap = document.createElement('div');
+          summaryActionsWrap.className = 'poweruser-bill-summary-actions';
+          summaryActionsWrap.appendChild(actionsWrap);
+          summaryActionsWrap.appendChild(billSummaryEl);
+          body.appendChild(summaryActionsWrap);
         } else {
           body.innerHTML = '<p class="poweruser-loading">Loading…</p>';
           (function (d) {
@@ -536,6 +627,55 @@
     document.body.removeChild(ta);
   }
 
+  function openBillImageLightbox(date) {
+    if (!date || typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getBillImage) return;
+    var overlay = document.createElement('div');
+    overlay.className = 'claims-bill-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Original bill image');
+    overlay.innerHTML = '<div class="claims-bill-lightbox__content"><button type="button" class="claims-bill-lightbox__close" aria-label="Close">×</button><div class="claims-bill-lightbox__loading">Loading…</div></div>';
+    document.body.appendChild(overlay);
+
+    function closeLightbox() {
+      overlay.removeEventListener('click', onOverlayClick);
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+    function onOverlayClick(e) {
+      if (e.target === overlay) closeLightbox();
+    }
+    overlay.querySelector('.claims-bill-lightbox__close').addEventListener('click', closeLightbox);
+    overlay.addEventListener('click', onOverlayClick);
+
+    function showBillImage(dataUrl) {
+      var loadingEl = overlay.querySelector('.claims-bill-lightbox__loading');
+      if (!loadingEl || !overlay.parentNode) return;
+      var img = document.createElement('img');
+      img.src = dataUrl;
+      img.alt = 'Original bill';
+      img.className = 'claims-bill-lightbox__img';
+      loadingEl.parentNode.replaceChild(img, loadingEl);
+    }
+
+    if (reviewState.billImageCache[date]) {
+      showBillImage(reviewState.billImageCache[date]);
+    } else {
+      ClaimsAPI.getBillImage(date)
+        .then(function (data) {
+          var dataUrl = (data && data.mimeType && data.base64)
+            ? ('data:' + data.mimeType + ';base64,' + data.base64) : '';
+          if (dataUrl) {
+            reviewState.billImageCache[date] = dataUrl;
+            showBillImage(dataUrl);
+          }
+        })
+        .catch(function (err) {
+          var loadingEl = overlay.querySelector('.claims-bill-lightbox__loading');
+          if (loadingEl) loadingEl.textContent = 'Failed to load image: ' + (err.message || err);
+        });
+    }
+  }
+
   function showErrorModal(message) {
     var overlay = document.createElement('div');
     overlay.className = 'poweruser-modal-overlay';
@@ -568,12 +708,8 @@
   }
 
   function renderBillUpload() {
-    var section = document.getElementById('poweruser-upload');
+    var section = document.getElementById('poweruser-upload-inline');
     if (!section) return;
-    if (!section.classList.contains('poweruser-section--active')) {
-      section.innerHTML = '<div class="poweruser-upload-area"><p class="poweruser-placeholder">Select "Upload New Bill" tab to use.</p></div>';
-      return;
-    }
     var html = '<div class="poweruser-upload-area">';
     html += '<p class="poweruser-upload-intro">Take a photo or select an image of the bill. We will analyze it and add it to the Bills sheet.</p>';
     html += '<div class="poweruser-upload-buttons">';
@@ -692,7 +828,7 @@
   }
 
   function showUploadSuccess(result) {
-    var section = document.getElementById('poweruser-upload');
+    var section = document.getElementById('poweruser-upload-inline');
     if (!section) return;
     var dateLabel = result.date && typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
       ? ClaimsFormatters.formatBillDateDisplay(result.date) : result.date;
@@ -704,12 +840,20 @@
     html += '<li><strong>Tip Amount:</strong> €' + (result.tipAmount != null ? result.tipAmount.toFixed(2) : '—') + '</li>';
     html += '<li><strong>Total Paid:</strong> €' + (result.totalPaid != null ? result.totalPaid.toFixed(2) : '—') + '</li>';
     html += '</ul>';
-    html += '<button type="button" class="poweruser-upload-again" id="poweruser-upload-again">Upload another bill</button>';
+    html += '<button type="button" class="poweruser-upload-ok" id="poweruser-upload-ok">OK</button>';
     html += '</div>';
     section.innerHTML = html;
-    document.getElementById('poweruser-upload-again').addEventListener('click', function () {
-      renderBillUpload();
+    document.getElementById('poweruser-upload-ok').addEventListener('click', function () {
+      section.innerHTML = '';
+      section.classList.remove('poweruser-upload-inline--open');
     });
+    if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.getBillsSummary && reviewState.billsData) {
+      ClaimsAPI.getBillsSummary().then(function (data) {
+        reviewState.billsData = data;
+        var listContainer = document.getElementById('poweruser-review-list');
+        if (listContainer) renderBillReviewContent(listContainer, data);
+      });
+    }
   }
 
   var PowerUserPage = {

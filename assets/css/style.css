@@ -807,45 +807,89 @@ body {
   margin-left: auto;
   margin-right: auto;
 }
+.claims-hero--godmode {
+  padding-top: 0.5rem;
+}
+.claims-hero__godmode-wrap {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  padding-top: 0.25rem;
+  padding-bottom: 0.5rem;
+}
+.claims-hero--godmode .claims-hero__title {
+  padding-top: 0;
+  padding-bottom: 0.25rem;
+  margin: 0;
+  font-size: 2.5rem;
+}
+@media (min-width: 640px) {
+  .claims-hero--godmode .claims-hero__title {
+    font-size: 3.5rem;
+  }
+}
+.claims-hero__god-icon-line {
+  text-align: center;
+  line-height: 1;
+  padding: 0.15rem 0;
+}
 .claims-hero__god-icon {
-  margin-left: 0.25rem;
-  opacity: 0.9;
+  display: inline-block;
+  font-size: 2rem;
+  opacity: 0.95;
+}
+.claims-hero__god-mode-line {
+  text-align: center;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  letter-spacing: 0.05em;
 }
 .poweruser-content {
   padding: 1rem 0 3rem;
   max-width: 56rem;
   margin: 0 auto;
 }
-.poweruser-tabs {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1.5rem;
+.poweruser-main-wrap {
+  position: relative;
 }
-.poweruser-tab {
-  padding: 0.5rem 1rem;
-  font-size: 0.9375rem;
-  font-weight: 500;
-  color: #94a3b8;
-  background: rgba(30, 41, 59, 0.8);
+.poweruser-add-bar {
+  margin-bottom: 0.5rem;
+}
+.poweruser-add-bar .poweruser-add-bill {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.75rem 1rem;
+  font-size: 1.5rem;
+  font-weight: 300;
+  line-height: 1;
+  color: #e2e8f0;
+  background: #1e293b;
   border: 1px solid #475569;
   border-radius: 0.5rem;
   cursor: pointer;
   font-family: inherit;
-  transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+  transition: background-color 0.2s, color 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.poweruser-tab:hover {
-  color: #cbd5e1;
+.poweruser-add-bar .poweruser-add-bill:hover {
   background: #334155;
-}
-.poweruser-tab--active {
   color: #f1f5f9;
-  background: #475569;
-  border-color: #64748b;
+}
+.poweruser-upload-inline {
+  display: none;
+  margin-bottom: 0.75rem;
+}
+.poweruser-upload-inline.poweruser-upload-inline--open {
+  display: block;
 }
 .poweruser-section {
   display: none;
 }
-.poweruser-section--active {
+.poweruser-section.poweruser-section--active {
   display: block;
 }
 .poweruser-loading,
@@ -913,6 +957,43 @@ body {
 .poweruser-bill-header:hover {
   background: rgba(51, 65, 85, 0.5);
 }
+.poweruser-bill-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.poweruser-bill-working {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  font-style: italic;
+}
+.poweruser-bill-padlock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  color: #94a3b8;
+  background: transparent;
+  border: none;
+  border-radius: 0.375rem;
+  cursor: pointer;
+  transition: color 0.2s, background-color 0.2s;
+}
+.poweruser-bill-padlock:hover:not(:disabled) {
+  color: #e2e8f0;
+  background: rgba(100, 116, 139, 0.2);
+}
+.poweruser-bill-padlock:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.poweruser-bill-padlock svg {
+  width: 1.125rem;
+  height: 1.125rem;
+}
 .poweruser-bill-header-actions {
   display: flex;
   align-items: center;
@@ -965,6 +1046,7 @@ body {
   padding: 0.2rem 0.5rem;
   border-radius: 0.25rem;
   font-weight: 600;
+  margin-right: 0.5rem;
 }
 .poweruser-bill-badge--open {
   background: rgba(34, 197, 94, 0.2);
@@ -1010,22 +1092,19 @@ body {
   flex-shrink: 0;
   color: #e2e8f0;
   font-variant-numeric: tabular-nums;
+  min-width: 4rem;
+  text-align: right;
 }
 .poweruser-item-spacer {
   flex: 1;
   min-width: 1rem;
 }
-.poweruser-item-claimant {
-  color: #94a3b8;
-  font-size: 0.875rem;
-  flex-shrink: 0;
-  text-align: right;
-}
 .poweruser-item-claimants {
   color: #94a3b8;
   font-size: 0.875rem;
-  text-align: right;
-  padding-left: 1rem;
+  text-align: left;
+  padding-left: 0;
+  margin-top: 0.125rem;
 }
 .poweruser-item-claimant-line {
   line-height: 1.4;
@@ -1081,8 +1160,47 @@ body {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+.poweruser-bill-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #334155;
+}
+.poweruser-bill-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  font-size: 0.9375rem;
+}
+.poweruser-bill-summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  min-width: 10rem;
+}
+.poweruser-bill-summary-label {
+  color: #94a3b8;
+}
+.poweruser-bill-summary-value {
+  flex-shrink: 0;
+  min-width: 4rem;
+  text-align: right;
+  color: #e2e8f0;
+  font-variant-numeric: tabular-nums;
+}
+.poweruser-bill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
 .poweruser-copy-btn {
-  margin-top: 1rem;
   padding: 0.5rem 1rem;
   font-size: 0.875rem;
   font-weight: 500;
@@ -1280,6 +1398,7 @@ body {
 .poweruser-success__list li {
   margin-bottom: 0.5rem;
 }
+.poweruser-upload-ok,
 .poweruser-upload-again {
   padding: 0.5rem 1rem;
   font-size: 0.9375rem;
@@ -1291,6 +1410,7 @@ body {
   cursor: pointer;
   font-family: inherit;
 }
+.poweruser-upload-ok:hover,
 .poweruser-upload-again:hover {
   background: #475569;
   color: #f1f5f9;

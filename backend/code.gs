@@ -78,7 +78,7 @@ function doPost(e) {
   var result = { error: null, data: null };
   try {
     var body = e && e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : {};
-    var action = body.action || (e.parameter && e.parameter.action);
+    var action = (body && body.action) || (e.parameter && e.parameter.action) || '';
     if (action === 'submitClaims') {
       result.data = submitClaims(body);
     } else if (action === 'analyzeBillImage') {
@@ -87,6 +87,8 @@ function doPost(e) {
       result.data = completeBillUpload(body);
     } else if (action === 'deleteBill') {
       result.data = deleteBill(body);
+    } else if (action === 'setBillOpen') {
+      result.data = setBillOpen(body);
     } else {
       throw new Error('Unknown or missing action');
     }
@@ -430,8 +432,21 @@ function getBillsSummary() {
   var metaData = metaSheet ? metaSheet.getDataRange().getValues() : [];
   var claimsData = claimsSheet ? claimsSheet.getDataRange().getValues() : [];
 
+  function findCol(header, names) {
+    if (!header || !names) return -1;
+    for (var n = 0; n < names.length; n++) {
+      var want = String(names[n]).trim().toLowerCase();
+      for (var h = 0; h < header.length; h++) {
+        var val = header[h] != null ? String(header[h]).trim().toLowerCase() : '';
+        if (val === want) return h;
+      }
+    }
+    return -1;
+  }
   var billHeader = billsData[0] || [];
   var bDateCol = billHeader.indexOf('Date');
+  var bRowIndexCol = findCol(billHeader, ['RowIndex', 'Row']);
+  var bQtyCol = findCol(billHeader, ['Quantity', 'Qty']);
   if (bDateCol < 0) return { bills: [] };
 
   var dateSet = {};
@@ -458,15 +473,54 @@ function getBillsSummary() {
   }
 
   var hasClaimsByDate = {};
-  if (claimsData.length >= 2) {
-    var claimsHeader = claimsData[0];
-    var cDateCol = claimsHeader.indexOf('Date');
-    if (cDateCol >= 0) {
-      for (var k = 1; k < claimsData.length; k++) {
-        var cDate = formatDate(claimsData[k][cDateCol]);
-        if (cDate) hasClaimsByDate[cDate] = true;
+  var allClaimedByDate = {};
+  var claimsHeader = claimsData.length >= 2 ? claimsData[0] : [];
+  var cDateCol = claimsHeader.indexOf('Date');
+  var cRowIndexCol = findCol(claimsHeader, ['RowIndex', 'Row']);
+  var cUnitIndexCol = findCol(claimsHeader, ['UnitIndex', 'Unit']);
+  var cUserCol = findCol(claimsHeader, ['UserName', 'Name']);
+  if (claimsData.length >= 2 && cDateCol >= 0) {
+    for (var k = 1; k < claimsData.length; k++) {
+      var cDate = formatDate(claimsData[k][cDateCol]);
+      if (cDate) hasClaimsByDate[cDate] = true;
+    }
+  }
+  var canComputeAllClaimed = bRowIndexCol >= 0 && bQtyCol >= 0 && cRowIndexCol >= 0 && cUnitIndexCol >= 0 && cUserCol >= 0;
+  for (var di = 0; di < Object.keys(dateSet).length; di++) {
+    var dateStr = Object.keys(dateSet).sort()[di];
+    var itemsForDate = [];
+    var runningIdx = 0;
+    if (canComputeAllClaimed) {
+      for (var i = 1; i < billsData.length; i++) {
+        var row = billsData[i];
+        var rowDate = formatDate(row[bDateCol]);
+        if (rowDate !== dateStr) continue;
+        var ri = row[bRowIndexCol] !== '' && row[bRowIndexCol] != null ? Number(row[bRowIndexCol]) : runningIdx;
+        runningIdx++;
+        var qty = Math.max(0, parseInt(row[bQtyCol], 10) || 0);
+        itemsForDate.push({ rowIndex: ri, quantity: qty });
       }
     }
+    var claimMap = {};
+    if (claimsData.length >= 2 && canComputeAllClaimed) {
+      for (var k = 1; k < claimsData.length; k++) {
+        var cRow = claimsData[k];
+        if (formatDate(cRow[cDateCol]) !== dateStr) continue;
+        var key = (parseInt(cRow[cRowIndexCol], 10) || 0) + '_' + (parseInt(cRow[cUnitIndexCol], 10) || 0);
+        var un = cRow[cUserCol];
+        claimMap[key] = un != null ? String(un).trim() : '';
+      }
+    }
+    var allClaimed = true;
+    for (var it = 0; it < itemsForDate.length; it++) {
+      var item = itemsForDate[it];
+      for (var u = 0; u < item.quantity; u++) {
+        var slotKey = item.rowIndex + '_' + u;
+        if (!claimMap[slotKey] || claimMap[slotKey] === '') { allClaimed = false; break; }
+      }
+      if (!allClaimed) break;
+    }
+    allClaimedByDate[dateStr] = itemsForDate.length > 0 && allClaimed;
   }
 
   var dates = Object.keys(dateSet).sort();
@@ -476,7 +530,8 @@ function getBillsSummary() {
     bills.push({
       date: dateStr,
       open: openByDate[dateStr] === true,
-      hasClaims: hasClaimsByDate[dateStr] === true
+      hasClaims: hasClaimsByDate[dateStr] === true,
+      allClaimed: allClaimedByDate[dateStr] === true
     });
   }
   return { bills: bills };
@@ -846,4 +901,32 @@ function deleteBill(body) {
   }
 
   return { ok: true };
+}
+
+/**
+ * Power user: set bill open/closed. body: { date: string, open: boolean }
+ * Only allowed when all items are claimed (enforced by UI; backend allows for flexibility).
+ */
+function setBillOpen(body) {
+  var dateStr = formatDate(body.date);
+  if (!dateStr) throw new Error('Invalid date');
+  var open = body.open === true;
+
+  var ss = getSpreadsheet();
+  var metaSheet = ss.getSheetByName(SHEETS.BILL_META);
+  if (!metaSheet) throw new Error('BillMeta sheet not found');
+
+  var metaData = metaSheet.getDataRange().getValues();
+  var metaHeader = metaData[0];
+  var metaDateCol = metaHeader.indexOf('Date');
+  var metaOpenCol = metaHeader.indexOf('Open');
+  if (metaDateCol < 0 || metaOpenCol < 0) throw new Error('BillMeta missing Date or Open column');
+
+  for (var j = 1; j < metaData.length; j++) {
+    if (formatDate(metaData[j][metaDateCol]) === dateStr) {
+      metaSheet.getRange(j + 1, metaOpenCol + 1).setValue(open);
+      return { ok: true, open: open };
+    }
+  }
+  throw new Error('No BillMeta row found for date ' + dateStr);
 }
