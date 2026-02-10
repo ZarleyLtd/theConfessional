@@ -278,7 +278,7 @@ function getBillForDate(date) {
   var billImageUrl = fileId
     ? ('https://drive.google.com/file/d/' + fileId + '/view')
     : null;
-  return { items: items, metadata: { billImageUrl: billImageUrl } };
+  return { items: items, metadata: { billImageUrl: billImageUrl, totalPaid: meta.totalPaid } };
 }
 
 function getBillImage(date) {

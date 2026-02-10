@@ -690,6 +690,12 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.claims-estimated-cost {
+  font-size: 1rem;
+  color: #cbd5e1;
+  margin: 0;
+}
+
 #claims-selection-area {
   margin-top: 1rem;
 }

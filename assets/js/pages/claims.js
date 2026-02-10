@@ -366,6 +366,7 @@
     html += '<div id="claims-summary-mount"></div>';
     html += '<div id="claims-selection-area">';
     html += '<p id="claims-descriptive-label" class="claims-descriptive-label">Your selection: (none)</p>';
+    html += '<p id="claims-estimated-cost" class="claims-estimated-cost" aria-live="polite">Estimated cost (incl tip): €?.??</p>';
     if (!state.isReviewMode) {
       html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn"><span class="claims-submit-btn__text">Submit my claims</span><span class="claims-submit-btn__progress-wrap"><span class="claims-submit-btn__progress"></span></span></button>';
     }
@@ -569,6 +570,43 @@
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  function getEstimatedCostInclTip() {
+    var bill = state.bill;
+    var items = (bill && bill.items) ? bill.items : [];
+    var sel = state.mySelection || [];
+    if (items.length === 0) return null;
+    var rowToUnitPrice = {};
+    var billTotal = 0;
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      var ri = it.rowIndex != null ? it.rowIndex : i;
+      rowToUnitPrice[ri] = parseFloat(it.unit_price) || 0;
+      billTotal += parseFloat(it.total_price) || 0;
+    }
+    var claimedTotal = 0;
+    for (var j = 0; j < sel.length; j++) {
+      var up = rowToUnitPrice[sel[j].rowIndex];
+      if (typeof up === 'number' && !isNaN(up)) claimedTotal += up;
+    }
+    var totalPaid = (bill.metadata && bill.metadata.totalPaid != null) ? parseFloat(bill.metadata.totalPaid) : null;
+    var tip = (totalPaid != null && !isNaN(totalPaid) && billTotal > 0 && totalPaid > billTotal)
+      ? totalPaid - billTotal
+      : 0;
+    var proportionalTip = (billTotal > 0 && claimedTotal > 0) ? tip * (claimedTotal / billTotal) : 0;
+    return claimedTotal + proportionalTip;
+  }
+
+  function updateEstimatedCost() {
+    var el = document.getElementById('claims-estimated-cost');
+    if (!el) return;
+    var value = getEstimatedCostInclTip();
+    if (value == null || (state.mySelection || []).length === 0) {
+      el.textContent = 'Estimated cost (incl tip): €?.??';
+      return;
+    }
+    el.textContent = 'Estimated cost (incl tip): €' + (Math.round(value * 100) / 100).toFixed(2);
+  }
+
   function updateDescriptiveLabel() {
     var el = document.getElementById('claims-descriptive-label');
     if (!el) return;
@@ -591,6 +629,7 @@
       }
     }
     el.innerHTML = 'Your selection: ' + (parts.length ? parts.join(', ') : '(none)');
+    updateEstimatedCost();
   }
 
   function showClaimedByOtherMessage(claimantName, buttonEl) {
@@ -651,13 +690,14 @@
     var btn = document.getElementById('claims-submit-btn');
     if (!btn) return;
 
-    if ((state.mySelection || []).length === 0) {
+    var original = state.originalClaimsForUser || [];
+    var sel = state.mySelection || [];
+
+    if (sel.length === 0 && original.length === 0) {
       showInfoMessage('Nothing claimed', btn);
       return;
     }
 
-    var original = state.originalClaimsForUser || [];
-    var sel = state.mySelection || [];
     var same = original.length === sel.length && sel.every(function (s) {
       return original.some(function (e) { return e.rowIndex === s.rowIndex && e.unitIndex === s.unitIndex; });
     });
