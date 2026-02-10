@@ -576,32 +576,40 @@
     }
     var html = '<div class="poweruser-upload-area">';
     html += '<p class="poweruser-upload-intro">Take a photo or select an image of the bill. We will analyze it and add it to the Bills sheet.</p>';
-    html += '<label class="poweruser-upload-label">';
-    html += '<input type="file" accept="image/*" capture="environment" id="poweruser-file-input" class="poweruser-file-input">';
-    html += '<span class="poweruser-upload-btn">Choose image (camera or gallery)</span>';
-    html += '</label>';
+    html += '<div class="poweruser-upload-buttons">';
+    html += '<input type="file" accept="image/*" capture="environment" id="poweruser-camera-input" class="poweruser-file-input" aria-hidden="true">';
+    html += '<input type="file" accept="image/*" id="poweruser-gallery-input" class="poweruser-file-input" aria-hidden="true">';
+    html += '<label class="poweruser-upload-btn poweruser-upload-btn--camera" for="poweruser-camera-input" title="Take photo with camera">';
+    html += '<span class="poweruser-upload-btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>';
+    html += '<span class="poweruser-upload-btn__text">Camera</span></label>';
+    html += '<label class="poweruser-upload-btn poweruser-upload-btn--file" for="poweruser-gallery-input" title="Choose image from gallery or file">';
+    html += '<span class="poweruser-upload-btn__icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg></span>';
+    html += '<span class="poweruser-upload-btn__text">Gallery / File</span></label>';
+    html += '</div>';
     html += '<div id="poweruser-upload-status"></div>';
     html += '</div>';
     section.innerHTML = html;
 
-    var fileInput = document.getElementById('poweruser-file-input');
-    if (fileInput) {
-      fileInput.addEventListener('change', function () {
-        var file = this.files && this.files[0];
-        if (!file) return;
-        var reader = new FileReader();
-        reader.onload = function () {
-          var dataUrl = reader.result;
-          var match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-          var mimeType = (match && match[1]) || 'image/jpeg';
-          var base64 = (match && match[2]) || '';
-          if (!base64) return;
-          showBTModalAndUpload({ base64: base64, mimeType: mimeType });
-        };
-        reader.readAsDataURL(file);
-        fileInput.value = '';
-      });
+    function handleImageChosen(input) {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var dataUrl = reader.result;
+        var match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        var mimeType = (match && match[1]) || 'image/jpeg';
+        var base64 = (match && match[2]) || '';
+        if (!base64) return;
+        showBTModalAndUpload({ base64: base64, mimeType: mimeType });
+      };
+      reader.readAsDataURL(file);
+      input.value = '';
     }
+
+    var cameraInput = document.getElementById('poweruser-camera-input');
+    var galleryInput = document.getElementById('poweruser-gallery-input');
+    if (cameraInput) cameraInput.addEventListener('change', function () { handleImageChosen(this); });
+    if (galleryInput) galleryInput.addEventListener('change', function () { handleImageChosen(this); });
   }
 
   function showBTModalAndUpload(imageData) {
