@@ -1280,6 +1280,10 @@ body {
   padding: 1rem;
   box-sizing: border-box;
 }
+.poweruser-modal-overlay--bt {
+  align-items: flex-start;
+  padding-top: 8rem;
+}
 .poweruser-modal {
   background: #1e293b;
   border: 1px solid #475569;

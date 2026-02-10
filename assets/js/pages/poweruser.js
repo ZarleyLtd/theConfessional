@@ -556,7 +556,7 @@
           var copyBtn = document.createElement('button');
           copyBtn.type = 'button';
           copyBtn.className = 'poweruser-copy-btn';
-          copyBtn.textContent = 'Clip for Bailey Bill';
+          copyBtn.textContent = 'Clip';
           copyBtn.addEventListener('click', (function (billForCopy) {
             return function () {
             var txt = buildClipboardText(billForCopy);
@@ -567,7 +567,7 @@
             if (navigator.clipboard && navigator.clipboard.writeText) {
               navigator.clipboard.writeText(txt).then(function () {
                 copyBtn.textContent = 'Clipped!';
-                setTimeout(function () { copyBtn.textContent = 'Clip for Bailey Bill'; }, 1500);
+                setTimeout(function () { copyBtn.textContent = 'Clip'; }, 1500);
               }).catch(function () {
                 fallbackCopy(txt, copyBtn);
               });
@@ -620,7 +620,7 @@
     try {
       document.execCommand('copy');
       btn.textContent = 'Clipped!';
-      setTimeout(function () { btn.textContent = 'Clip for Bailey Bill'; }, 1500);
+      setTimeout(function () { btn.textContent = 'Clip'; }, 1500);
     } catch (e) {
       alert('Copy failed. Please select and copy manually.');
     }
@@ -750,7 +750,7 @@
 
   function showBTModalAndUpload(imageData) {
     var overlay = document.createElement('div');
-    overlay.className = 'poweruser-modal-overlay';
+    overlay.className = 'poweruser-modal-overlay poweruser-modal-overlay--bt';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', 'Enter total paid');
