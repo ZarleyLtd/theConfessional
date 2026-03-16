@@ -729,17 +729,45 @@
     function handleImageChosen(input) {
       var file = input.files && input.files[0];
       if (!file) return;
-      var reader = new FileReader();
-      reader.onload = function () {
-        var dataUrl = reader.result;
-        var match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        var mimeType = (match && match[1]) || 'image/jpeg';
-        var base64 = (match && match[2]) || '';
-        if (!base64) return;
-        showBTModalAndUpload({ base64: base64, mimeType: mimeType });
-      };
-      reader.readAsDataURL(file);
       input.value = '';
+
+      var statusEl = document.getElementById('poweruser-upload-status');
+      if (statusEl) {
+        statusEl.textContent = 'Compressing image…';
+        statusEl.classList.remove('poweruser-upload-status--error');
+      }
+
+      var compress = (typeof BillImageCompress !== 'undefined' && BillImageCompress.compressBillImage)
+        ? BillImageCompress.compressBillImage(file)
+        : readFileAsDataUrlFallback(file);
+
+      compress
+        .then(function (imageData) {
+          if (statusEl) statusEl.textContent = '';
+          showBTModalAndUpload(imageData);
+        })
+        .catch(function (err) {
+          if (statusEl) {
+            statusEl.textContent = err.message || 'Failed to process image';
+            statusEl.classList.add('poweruser-upload-status--error');
+          }
+        });
+    }
+
+    function readFileAsDataUrlFallback(file) {
+      return new Promise(function (resolve, reject) {
+        var reader = new FileReader();
+        reader.onload = function () {
+          var dataUrl = reader.result;
+          var match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+          var mimeType = (match && match[1]) || 'image/jpeg';
+          var base64 = (match && match[2]) || '';
+          if (!base64) reject(new Error('Invalid image'));
+          else resolve({ base64: base64, mimeType: mimeType });
+        };
+        reader.onerror = function () { reject(new Error('Failed to read file')); };
+        reader.readAsDataURL(file);
+      });
     }
 
     var cameraInput = document.getElementById('poweruser-camera-input');

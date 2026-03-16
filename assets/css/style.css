@@ -1275,6 +1275,14 @@ body {
 .poweruser-upload-btn--file .poweruser-upload-btn__icon {
   color: inherit;
 }
+#poweruser-upload-status {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+#poweruser-upload-status.poweruser-upload-status--error {
+  color: #f87171;
+}
 .poweruser-modal-overlay {
   position: fixed;
   inset: 0;
