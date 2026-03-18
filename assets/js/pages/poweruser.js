@@ -474,12 +474,12 @@
               var itemUnit = document.createElement('span');
               itemUnit.className = 'poweruser-item-unit';
               itemUnit.textContent = g.description + ' x' + qty + ' @ ' + formatNum(g.unitPrice);
+              lineWrap.appendChild(itemUnit);
               var spacer = document.createElement('span');
               spacer.className = 'poweruser-item-spacer';
               var itemTotal = document.createElement('span');
               itemTotal.className = 'poweruser-item-total';
               itemTotal.textContent = '€' + lineTotal;
-              lineWrap.appendChild(itemUnit);
               lineWrap.appendChild(spacer);
               lineWrap.appendChild(itemTotal);
               row.appendChild(lineWrap);
@@ -490,6 +490,9 @@
                   var clSpan = document.createElement('div');
                   clSpan.className = 'poweruser-item-claimant-line';
                   clSpan.textContent = claimantLines[cl];
+                  if (String(claimantLines[cl]).indexOf('Unclaimed') === 0) {
+                    clSpan.className += ' poweruser-item-claimant-line--unclaimed';
+                  }
                   claimantsWrap.appendChild(clSpan);
                 }
                 row.appendChild(claimantsWrap);

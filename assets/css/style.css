@@ -1115,6 +1115,18 @@ body {
 .poweruser-item-claimant-line {
   line-height: 1.4;
 }
+.poweruser-item-claimant-line--unclaimed {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(248, 113, 113, 0.18);
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  color: #f87171;
+  font-weight: 700;
+  font-size: 0.8125rem;
+  letter-spacing: 0.01em;
+}
 .poweruser-user-block {
   padding: 0.75rem 0;
   border-bottom: 1px solid #334155;
