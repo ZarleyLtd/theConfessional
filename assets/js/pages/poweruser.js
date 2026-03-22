@@ -318,6 +318,7 @@
       var dateLabel = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
         ? ClaimsFormatters.formatBillDateDisplay(dateStr) : dateStr;
       var isOpen = bill.open === true;
+      var isInFlight = bill.inFlight === true;
       var isExpanded = reviewState.expandedDate === dateStr;
       if (isExpanded) prefetchBillImage(dateStr);
       var fullBill = reviewState.billCache[dateStr];
@@ -344,7 +345,7 @@
 
       var headerRight = document.createElement('div');
       headerRight.className = 'poweruser-bill-header-right';
-      if (allClaimed) {
+      if (allClaimed && !isInFlight) {
         var padlockBtn = document.createElement('button');
         padlockBtn.type = 'button';
         padlockBtn.className = 'poweruser-bill-padlock';
@@ -383,8 +384,13 @@
         headerRight.appendChild(padlockBtn);
       }
       var badge = document.createElement('span');
-      badge.className = 'poweruser-bill-badge poweruser-bill-badge--' + (isOpen ? 'open' : 'closed');
-      badge.textContent = isOpen ? 'Open' : 'Closed';
+      if (isInFlight) {
+        badge.className = 'poweruser-bill-badge poweruser-bill-badge--inflight';
+        badge.textContent = 'In flight';
+      } else {
+        badge.className = 'poweruser-bill-badge poweruser-bill-badge--' + (isOpen ? 'open' : 'closed');
+        badge.textContent = isOpen ? 'Open' : 'Closed';
+      }
       headerRight.appendChild(badge);
       headerWrap.appendChild(headerRight);
 
@@ -410,7 +416,7 @@
       }
 
       var hasNoClaims = bill.hasClaims === false;
-      if (hasNoClaims) {
+      if (hasNoClaims || isInFlight) {
         var deleteBtn = document.createElement('button');
         deleteBtn.type = 'button';
         deleteBtn.className = 'poweruser-bill-delete';
@@ -422,7 +428,13 @@
           var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
           if (!confirm('Delete this bill? This will remove all bill items, the BillMeta row, and the image file from Drive.')) return;
           var list = document.getElementById('poweruser-bills-list');
+          var btn = this;
           if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.deleteBill) {
+            var workingEl = document.createElement('span');
+            workingEl.className = 'poweruser-bill-working';
+            workingEl.textContent = 'Working';
+            btn.parentNode.insertBefore(workingEl, btn);
+            btn.disabled = true;
             ClaimsAPI.deleteBill({ date: d })
               .then(function () {
                 if (list && reviewState.billsData) {
@@ -433,6 +445,8 @@
                 }
               })
               .catch(function (err) {
+                if (workingEl.parentNode) workingEl.parentNode.removeChild(workingEl);
+                btn.disabled = false;
                 alert('Delete failed: ' + (err.message || err));
               });
           }
@@ -715,70 +729,71 @@
   }
 
   /**
-   * Next total paid (B+T) when pressing + : smallest amount strictly greater than P0 that is
-   * any of: next tip on €5 grid, exact 5%/10%/15% tip on B, or total a multiple of €5.
+   * Next total paid when pressing + : smallest strictly above P0 among tip-€5, 5/10/15%, total-€5.
+   * Returns { paid, driver } where driver is 'tip' | 'pct' | 'total' for UI feedback.
    */
   function totalPaidNextStepUp(P0, B) {
     var Bc = Math.round(B * 100);
     var P0c = Math.round(P0 * 100);
     if (Bc < 0 || P0c < Bc) P0c = Bc;
     var T0c = P0c - Bc;
-    var cands = [];
+    var entries = [];
 
     var Tnext = Math.floor(T0c / 500) * 500 + 500;
-    cands.push(Bc + Tnext);
+    entries.push({ c: Bc + Tnext, pri: 0, driver: 'tip' });
 
     var mults = [1.05, 1.1, 1.15];
     for (var i = 0; i < mults.length; i++) {
       var pc = Math.round(B * mults[i] * 100);
-      if (pc > P0c) cands.push(pc);
+      if (pc > P0c) entries.push({ c: pc, pri: 1, driver: 'pct' });
     }
 
     var pMult5 = Math.floor(P0c / 500) * 500;
     if (pMult5 <= P0c) pMult5 += 500;
-    cands.push(pMult5);
+    entries.push({ c: pMult5, pri: 2, driver: 'total' });
 
     var best = null;
-    for (var j = 0; j < cands.length; j++) {
-      var c = cands[j];
-      if (c <= P0c || c < Bc) continue;
-      if (best === null || c < best) best = c;
+    for (var j = 0; j < entries.length; j++) {
+      var e = entries[j];
+      if (e.c <= P0c || e.c < Bc) continue;
+      if (best === null || e.c < best.c || (e.c === best.c && e.pri < best.pri)) best = e;
     }
-    return best === null ? roundMoney2(P0) : best / 100;
+    if (best === null) return { paid: roundMoney2(P0), driver: 'total' };
+    return { paid: best.c / 100, driver: best.driver };
   }
 
-  /** Previous total paid when pressing − : largest milestone strictly below P0, not below B. */
+  /** Previous total when pressing − : largest milestone strictly below P0, not below B. */
   function totalPaidNextStepDown(P0, B) {
     var Bc = Math.round(B * 100);
     var P0c = Math.round(P0 * 100);
     if (P0c < Bc) P0c = Bc;
     var T0c = P0c - Bc;
-    var cands = [];
+    var entries = [];
 
     if (T0c > 0) {
       var Tprev;
       if (T0c % 500 === 0) Tprev = T0c - 500;
       else Tprev = Math.floor((T0c - 1) / 500) * 500;
-      if (Tprev >= 0) cands.push(Bc + Tprev);
+      if (Tprev >= 0) entries.push({ c: Bc + Tprev, pri: 0, driver: 'tip' });
     }
 
     var mults = [1.05, 1.1, 1.15];
     for (var i = 0; i < mults.length; i++) {
       var pc = Math.round(B * mults[i] * 100);
-      if (pc < P0c && pc >= Bc) cands.push(pc);
+      if (pc < P0c && pc >= Bc) entries.push({ c: pc, pri: 1, driver: 'pct' });
     }
 
     var pMult5 = Math.floor((P0c - 1) / 500) * 500;
-    if (pMult5 >= Bc) cands.push(pMult5);
+    if (pMult5 >= Bc) entries.push({ c: pMult5, pri: 2, driver: 'total' });
 
     var best = null;
-    for (var j = 0; j < cands.length; j++) {
-      var c = cands[j];
-      if (c >= P0c || c < Bc) continue;
-      if (best === null || c > best) best = c;
+    for (var j = 0; j < entries.length; j++) {
+      var e = entries[j];
+      if (e.c >= P0c || e.c < Bc) continue;
+      if (best === null || e.c > best.c || (e.c === best.c && e.pri < best.pri)) best = e;
     }
-    if (best === null) return roundMoney2(B);
-    return best / 100;
+    if (best === null) return { paid: roundMoney2(B), driver: 'tip' };
+    return { paid: best.c / 100, driver: best.driver };
   }
 
   function renderBillUpload() {
@@ -957,10 +972,15 @@
       var B = state.billTotal;
       var dateLabel = state.dateStr && typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
         ? ClaimsFormatters.formatBillDateDisplay(state.dateStr) : state.dateStr;
-      var html = '<ul class="poweruser-bill-analysed-summary">';
-      html += '<li><strong>Bill Date:</strong> ' + escapeHtml(dateLabel) + '</li>';
-      html += '<li><strong>Bill Total:</strong> €' + formatNum(B) + '</li>';
-      html += '</ul>';
+      var html = '<ul class="poweruser-bill-analysed-summary poweruser-bill-analysed-summary--hero">';
+      html += '<li class="poweruser-bill-hero-row">';
+      html += '<div class="poweruser-bill-hero-col poweruser-bill-hero-col--date">';
+      html += '<span class="poweruser-bill-hero-label">Bill date</span>';
+      html += '<span class="poweruser-bill-hero-value">' + escapeHtml(dateLabel) + '</span></div>';
+      html += '<div class="poweruser-bill-hero-col poweruser-bill-hero-col--total">';
+      html += '<span class="poweruser-bill-hero-label">Bill total</span>';
+      html += '<span class="poweruser-bill-hero-value">€' + formatNum(B) + '</span></div>';
+      html += '</li></ul>';
       html += '<div class="poweruser-bt-stack">';
       html += '<div class="poweruser-bt-row poweruser-bt-row--tip">';
       html += '<label class="poweruser-bt-field__label" for="poweruser-bt-tip">Tip (€)</label>';
@@ -1000,7 +1020,12 @@
           tipPctEl.textContent = '—';
           return;
         }
-        var tot = parseMoney(totalInput.value);
+        var rawTot = totalInput.value.trim();
+        if (rawTot === '') {
+          tipPctEl.textContent = '—';
+          return;
+        }
+        var tot = parseMoney(rawTot);
         if (isNaN(tot)) {
           tipPctEl.textContent = '—';
           return;
@@ -1012,6 +1037,22 @@
         }
         var pct = (tipAmt / B) * 100;
         tipPctEl.textContent = pct.toFixed(1) + '%';
+      }
+
+      function flashStepDriver(driver) {
+        var el = driver === 'tip' ? tipInput : driver === 'pct' ? tipPctEl : totalInput;
+        if (!el) return;
+        el.classList.add('poweruser-bt-flash-bold');
+        window.setTimeout(function () {
+          el.classList.remove('poweruser-bt-flash-bold');
+        }, 500);
+      }
+
+      function selectAllOnFocus(el) {
+        if (!el) return;
+        window.setTimeout(function () {
+          if (typeof el.select === 'function') el.select();
+        }, 0);
       }
 
       function currentTotalForStep() {
@@ -1057,16 +1098,17 @@
 
       function onTotalInput() {
         if (syncLock) return;
-        var s = totalInput.value.trim();
+        var s = totalInput.value;
         syncLock = true;
-        var tot = parseMoney(s);
-        if (s === '' || isNaN(tot)) {
+        var trimmed = s.trim();
+        if (trimmed === '') {
           tipInput.value = '';
-          totalInput.value = formatNum(B);
         } else {
-          var tipAmt = roundMoney2(tot - B);
-          tipInput.value = tipDisplayFromAmount(tipAmt);
-          totalInput.value = formatNum(roundMoney2(tot));
+          var tot = parseMoney(trimmed);
+          if (!isNaN(tot) && tot >= 0) {
+            var tipAmt = roundMoney2(tot - B);
+            tipInput.value = tipDisplayFromAmount(tipAmt);
+          }
         }
         syncLock = false;
         updateTipPctLabel();
@@ -1074,6 +1116,15 @@
       }
 
       applyTotalPaid(roundMoney2(B * 1.1));
+
+      tipInput.addEventListener('focus', function () {
+        if (syncLock) return;
+        selectAllOnFocus(tipInput);
+      });
+      totalInput.addEventListener('focus', function () {
+        if (syncLock) return;
+        selectAllOnFocus(totalInput);
+      });
 
       tipInput.addEventListener('input', onTipInput);
       tipInput.addEventListener('blur', function () {
@@ -1096,24 +1147,36 @@
       totalInput.addEventListener('input', onTotalInput);
       totalInput.addEventListener('blur', function () {
         if (syncLock) return;
-        var tot = parseMoney(totalInput.value);
-        if (isNaN(tot)) return;
+        var raw = totalInput.value.trim();
         syncLock = true;
-        var tipAmt = roundMoney2(tot - B);
-        tipInput.value = tipDisplayFromAmount(tipAmt);
-        totalInput.value = formatNum(roundMoney2(tot));
+        if (raw === '') {
+          tipInput.value = '';
+          totalInput.value = formatNum(B);
+        } else {
+          var tot = parseMoney(raw);
+          if (isNaN(tot) || tot < B) {
+            totalInput.value = formatNum(B);
+            tipInput.value = '';
+          } else {
+            var tipAmt = roundMoney2(tot - B);
+            tipInput.value = tipDisplayFromAmount(tipAmt);
+            totalInput.value = formatNum(roundMoney2(tot));
+          }
+        }
         syncLock = false;
         updateTipPctLabel();
         refreshStepperButtons();
       });
 
       document.getElementById('poweruser-bt-minus').addEventListener('click', function () {
-        var P1 = totalPaidNextStepDown(currentTotalForStep(), B);
-        applyTotalPaid(P1);
+        var step = totalPaidNextStepDown(currentTotalForStep(), B);
+        applyTotalPaid(step.paid);
+        flashStepDriver(step.driver);
       });
       document.getElementById('poweruser-bt-plus').addEventListener('click', function () {
-        var P1 = totalPaidNextStepUp(currentTotalForStep(), B);
-        applyTotalPaid(P1);
+        var step = totalPaidNextStepUp(currentTotalForStep(), B);
+        applyTotalPaid(step.paid);
+        flashStepDriver(step.driver);
       });
 
       var confirmBtn = document.getElementById('poweruser-bill-confirm');
@@ -1121,6 +1184,7 @@
         confirmBtn.hidden = false;
       }
       refreshConfirmEnabled();
+      kickPersist();
       if (state.persistPromise && typeof state.persistPromise.then === 'function') {
         state.persistPromise.then(function () { refreshConfirmEnabled(); }).catch(function () { refreshConfirmEnabled(); });
       }
@@ -1131,7 +1195,8 @@
       var tipInput = document.getElementById('poweruser-bt-tip');
       var B = state.billTotal;
       if (!totalInput) return NaN;
-      var tot = parseFloat(String(totalInput.value).trim().replace(',', '.'));
+      var raw = String(totalInput.value).trim();
+      var tot = raw === '' ? NaN : parseFloat(raw.replace(',', '.'));
       if (isNaN(tot)) {
         var s = tipInput && tipInput.value.trim();
         if (s === '') return B;
@@ -1144,40 +1209,59 @@
 
     modal.querySelector('#poweruser-bill-confirm').addEventListener('click', function onBtConfirm() {
       var btn = document.getElementById('poweruser-bill-confirm');
-      if (!state.persistSucceeded || btn.hidden) return;
+      if (btn.hidden || !state.persistSucceeded) return;
       var totalPaid = readTotalPaidFromForm();
       if (isNaN(totalPaid) || totalPaid < state.billTotal - 1e-6) {
         showErrorModal('Enter a valid total at least equal to the bill total (€' + formatNum(state.billTotal) + ').');
         return;
       }
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = 'Saving…';
+      if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.updateBillTotalPaid || !ClaimsAPI.setBillOpen) {
+        showErrorModal('API not available');
+        return;
       }
-      function updateOnce() {
-        return ClaimsAPI.updateBillTotalPaid({
-          date: state.dateStr,
-          totalPaid: totalPaid
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+
+      function ensurePersisted() {
+        if (state.persistSucceeded) return Promise.resolve();
+        return ClaimsAPI.completeBillUpload({
+          jobId: state.jobId,
+          base64: imageData.base64,
+          mimeType: imageData.mimeType
+        }).then(function () {
+          state.persistSucceeded = true;
+          hidePersistBanner();
         });
       }
-      state.persistPromise
-        .then(function () {
-          if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.updateBillTotalPaid) throw new Error('API not available');
-          return updateOnce().catch(function () {
-            return updateOnce();
+
+      function finalizeOnce() {
+        return ClaimsAPI.updateBillTotalPaid({ date: state.dateStr, totalPaid: totalPaid }).then(function (upd) {
+          return ClaimsAPI.setBillOpen({ date: state.dateStr, open: true }).then(function () {
+            return upd;
           });
+        });
+      }
+
+      ensurePersisted()
+        .catch(function () {
+          if (state.persistSucceeded) return Promise.resolve();
+          return ensurePersisted();
+        })
+        .then(function () {
+          return finalizeOnce();
+        })
+        .catch(function () {
+          return finalizeOnce();
         })
         .then(function (result) {
           closeModal();
           showUploadSuccess(result);
         })
         .catch(function (err) {
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Confirm';
-          }
+          btn.disabled = false;
+          btn.textContent = 'Confirm';
           refreshConfirmEnabled();
-          showErrorModal(err.message || 'Failed to update total paid');
+          showErrorModal(err.message || 'Failed to finalize bill');
         });
     });
 
@@ -1205,7 +1289,6 @@
         titleEl.textContent = 'Bill successfully analysed';
         hintEl.textContent = '';
         renderTipOptions();
-        kickPersist();
       })
       .catch(function (err) {
         showErrorModal(err.message || 'Analysis failed');

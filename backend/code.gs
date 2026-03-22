@@ -140,8 +140,7 @@ function getDatesWithBills() {
           var row = metaData[j];
           var dateStr = formatDate(row[metaDateCol]);
           if (dateStr) {
-            var v = row[metaOpenCol];
-            openByDate[dateStr] = v === true || (typeof v === 'string' && v.toUpperCase() === 'TRUE');
+            openByDate[dateStr] = parseBillMetaOpenCell_(row[metaOpenCol]);
           }
         }
       }
@@ -149,7 +148,10 @@ function getDatesWithBills() {
   }
   var result = [];
   for (var k = 0; k < dates.length; k++) {
-    result.push({ date: dates[k], open: openByDate[dates[k]] === true });
+    var ds = dates[k];
+    var os = openByDate[ds];
+    if (os === null || os === undefined) continue;
+    result.push({ date: ds, open: os === true });
   }
   return result;
 }
@@ -186,12 +188,24 @@ function normalizeDriveFileId(val) {
   return s;
 }
 
+/** true = open for claims, false = closed, null = in-flight (Open cell blank / incomplete upload). */
+function parseBillMetaOpenCell_(v) {
+  if (v === true) return true;
+  if (v === false) return false;
+  if (v == null || (typeof v === 'string' && String(v).trim() === '')) return null;
+  var s = String(v).trim().toUpperCase();
+  if (s === 'TRUE') return true;
+  if (s === 'FALSE') return false;
+  return null;
+}
+
 function getBillMetaForDate(dateStr) {
+  var empty = { billImageId: null, open: false, totalPaid: null, inFlight: false };
   var ss = getSpreadsheet();
   var sheet = ss.getSheetByName(SHEETS.BILL_META);
-  if (!sheet) return { billImageId: null, open: false, totalPaid: null };
+  if (!sheet) return empty;
   var data = sheet.getDataRange().getValues();
-  if (data.length < 2) return { billImageId: null, open: false, totalPaid: null };
+  if (data.length < 2) return empty;
   var header = data[0];
   var dateCol = header.indexOf('Date');
   var imageIdCol = header.indexOf('BillImageId');
@@ -204,25 +218,23 @@ function getBillMetaForDate(dateStr) {
     }
   }
   if (totalPaidCol < 0 && header.length >= 4) totalPaidCol = 3;
-  if (dateCol < 0 || imageIdCol < 0) return { billImageId: null, open: false, totalPaid: null };
+  if (dateCol < 0 || imageIdCol < 0) return empty;
   for (var i = 1; i < data.length; i++) {
     var row = data[i];
     if (formatDate(row[dateCol]) === dateStr) {
       var id = (row[imageIdCol] != null && String(row[imageIdCol]).trim() !== '') ? String(row[imageIdCol]).trim() : null;
-      var isOpen = false;
-      if (openCol >= 0 && row[openCol] != null) {
-        var v = row[openCol];
-        isOpen = v === true || (typeof v === 'string' && v.toUpperCase() === 'TRUE');
-      }
+      var openParsed = openCol >= 0 ? parseBillMetaOpenCell_(row[openCol]) : false;
+      var inFlight = openCol >= 0 && openParsed === null;
+      var isOpenForClaims = openParsed === true;
       var totalPaid = null;
       if (totalPaidCol >= 0 && row[totalPaidCol] != null && row[totalPaidCol] !== '') {
         var tp = parseFloat(row[totalPaidCol]);
         if (!isNaN(tp) && tp >= 0) totalPaid = tp;
       }
-      return { billImageId: id, open: isOpen, totalPaid: totalPaid };
+      return { billImageId: id, open: isOpenForClaims, totalPaid: totalPaid, inFlight: inFlight };
     }
   }
-  return { billImageId: null, open: false, totalPaid: null };
+  return empty;
 }
 
 function hasBillMetaForDate(dateStr) {
@@ -378,8 +390,7 @@ function getAllBillsFull() {
         var mRow = metaData[j];
         var d = formatDate(mRow[metaDateCol]);
         if (d) {
-          var v = mRow[metaOpenCol];
-          openByDate[d] = v === true || (typeof v === 'string' && v.toUpperCase() === 'TRUE');
+          openByDate[d] = parseBillMetaOpenCell_(mRow[metaOpenCol]);
         }
       }
     }
@@ -412,9 +423,11 @@ function getAllBillsFull() {
   var bills = [];
   for (var n = 0; n < dates.length; n++) {
     var dateStr = dates[n];
+    var oR = openByDate[dateStr];
     bills.push({
       date: dateStr,
-      open: openByDate[dateStr] === true,
+      open: oR === true,
+      inFlight: oR === null,
       items: itemsByDate[dateStr] || [],
       claims: claimsByDate[dateStr] || []
     });
@@ -467,8 +480,7 @@ function getBillsSummary() {
         var mRow = metaData[j];
         var d = formatDate(mRow[metaDateCol]);
         if (d) {
-          var v = mRow[metaOpenCol];
-          openByDate[d] = v === true || (typeof v === 'string' && v.toUpperCase() === 'TRUE');
+          openByDate[d] = parseBillMetaOpenCell_(mRow[metaOpenCol]);
         }
       }
     }
@@ -529,9 +541,13 @@ function getBillsSummary() {
   var bills = [];
   for (var n = 0; n < dates.length; n++) {
     var dateStr = dates[n];
+    var oRaw = openByDate[dateStr];
+    var inFlight = oRaw === null;
+    var isOpen = oRaw === true;
     bills.push({
       date: dateStr,
-      open: openByDate[dateStr] === true,
+      open: isOpen,
+      inFlight: inFlight,
       hasClaims: hasClaimsByDate[dateStr] === true,
       allClaimed: allClaimedByDate[dateStr] === true
     });
@@ -549,6 +565,7 @@ function getBillFull(date) {
   return {
     date: dateStr,
     open: meta.open === true,
+    inFlight: meta.inFlight === true,
     totalPaid: meta.totalPaid,
     items: billData.items || [],
     claims: claimsData || []
@@ -764,7 +781,10 @@ function analyzeBillImage(body) {
   var parsed = parseGeminiBillJson(extractedText);
   var dateStr = parsed.date || formatDate(new Date());
   if (hasBillMetaForDate(dateStr)) {
-    throw new Error('A bill already exists for ' + dateStr + '. Delete it first if you want to replace it.');
+    var existingMeta = getBillMetaForDate(dateStr);
+    if (!existingMeta.inFlight) {
+      throw new Error('A bill already exists for ' + dateStr + '. Delete it first if you want to replace it.');
+    }
   }
   var jobId = Utilities.getUuid();
   PropertiesService.getScriptProperties().setProperty('billUpload_' + jobId, JSON.stringify(parsed));
@@ -781,10 +801,52 @@ function parseGeminiBillJson(text) {
   return parsed;
 }
 
+function deleteBillsRowsForDate_(billsSheet, dateStr) {
+  var billsData = billsSheet.getDataRange().getValues();
+  if (billsData.length < 2) return;
+  var dateCol = billsData[0].indexOf('Date');
+  if (dateCol < 0) return;
+  var rowsToDelete = [];
+  for (var i = 1; i < billsData.length; i++) {
+    if (formatDate(billsData[i][dateCol]) === dateStr) rowsToDelete.push(i + 1);
+  }
+  for (var d = rowsToDelete.length - 1; d >= 0; d--) {
+    billsSheet.deleteRow(rowsToDelete[d]);
+  }
+}
+
+/** 1-based row index in BillMeta for dateStr, or -1 */
+function findBillMetaRowNum_(metaSheet, dateStr) {
+  var metaData = metaSheet.getDataRange().getValues();
+  if (metaData.length < 2) return -1;
+  var metaDateCol = metaData[0].indexOf('Date');
+  if (metaDateCol < 0) return -1;
+  for (var j = 1; j < metaData.length; j++) {
+    if (formatDate(metaData[j][metaDateCol]) === dateStr) return j + 1;
+  }
+  return -1;
+}
+
+function appendBillItemRowsForDate_(billsSheet, dateStr, items) {
+  var arr = items || [];
+  var rowIndex = 0;
+  for (var i = 0; i < arr.length; i++) {
+    var it = arr[i];
+    var cat = (it.category || 'Drink').trim();
+    var desc = (it.description || '').trim();
+    var qty = parseInt(it.quantity, 10) || 1;
+    var unitPrice = parseFloat(it.unit_price) || 0;
+    var totalPrice = parseFloat(it.total_price) || (unitPrice * qty);
+    billsSheet.appendRow([dateStr, rowIndex, cat, desc, qty, unitPrice, totalPrice]);
+    rowIndex++;
+  }
+}
+
 /**
  * Power user: Phase 2 - complete upload using jobId (+ optional paidAmount).
- * body: { jobId: string, base64: string, mimeType: string, paidAmount?: number }
- * If paidAmount omitted, TotalPaid is left blank for a later updateBillTotalPaid call.
+ * Without paidAmount: writes Bills + BillMeta with blank Open and blank TotalPaid (in-flight).
+ * Replaces Bills + image + clears Open/TotalPaid if a row already exists in-flight for that date.
+ * With paidAmount: legacy one-shot append with Open TRUE (optional).
  */
 function completeBillUpload(body) {
   var jobId = body.jobId;
@@ -819,27 +881,50 @@ function completeBillUpload(body) {
   }
 
   var items = analysis.items || [];
-  var rowIndex = 0;
-  for (var i = 0; i < items.length; i++) {
-    var it = items[i];
-    var cat = (it.category || 'Drink').trim();
-    var desc = (it.description || '').trim();
-    var qty = parseInt(it.quantity, 10) || 1;
-    var unitPrice = parseFloat(it.unit_price) || 0;
-    var totalPrice = parseFloat(it.total_price) || (unitPrice * qty);
-    billsSheet.appendRow([dateStr, rowIndex, cat, desc, qty, unitPrice, totalPrice]);
-    rowIndex++;
-  }
 
   var metaHeader = metaSheet.getRange(1, 1, 1, metaSheet.getLastColumn()).getValues()[0];
-  var hasTotalPaid = metaHeader.some(function (h) { return (h || '').toString().toLowerCase() === 'totalpaid'; });
-  if (!hasTotalPaid && metaSheet.getLastRow() === 1) {
+  var hasTotalPaidCol = metaHeader.some(function (h) { return (h || '').toString().toLowerCase() === 'totalpaid'; });
+  if (!hasTotalPaidCol && metaSheet.getLastRow() === 1) {
     metaSheet.getRange(1, 4).setValue('TotalPaid');
+    metaHeader = metaSheet.getRange(1, 1, 1, metaSheet.getLastColumn()).getValues()[0];
   }
-  if (hasPaidAmount) {
-    metaSheet.appendRow([dateStr, fileId || '', true, paidAmount]);
+  var metaImageCol = metaHeader.indexOf('BillImageId');
+  var metaOpenCol = metaHeader.indexOf('Open');
+  var totalPaidCol = -1;
+  for (var hx = 0; hx < metaHeader.length; hx++) {
+    if ((metaHeader[hx] || '').toString().toLowerCase() === 'totalpaid') {
+      totalPaidCol = hx;
+      break;
+    }
+  }
+  if (totalPaidCol < 0 && metaHeader.length >= 4) totalPaidCol = 3;
+
+  if (!hasPaidAmount) {
+    var existing = getBillMetaForDate(dateStr);
+    var replacingInflight = existing.inFlight === true && hasBillMetaForDate(dateStr);
+    if (replacingInflight) {
+      var oldFileId = normalizeDriveFileId(existing.billImageId);
+      if (oldFileId) {
+        try {
+          DriveApp.getFileById(oldFileId).setTrashed(true);
+        } catch (eTrash) {}
+      }
+      deleteBillsRowsForDate_(billsSheet, dateStr);
+      appendBillItemRowsForDate_(billsSheet, dateStr, items);
+      var metaRowNum = findBillMetaRowNum_(metaSheet, dateStr);
+      if (metaRowNum < 0) throw new Error('BillMeta row missing for in-flight bill');
+      if (metaImageCol >= 0) metaSheet.getRange(metaRowNum, metaImageCol + 1).setValue(fileId || '');
+      if (metaOpenCol >= 0) metaSheet.getRange(metaRowNum, metaOpenCol + 1).setValue('');
+      if (totalPaidCol >= 0) metaSheet.getRange(metaRowNum, totalPaidCol + 1).setValue('');
+    } else if (!hasBillMetaForDate(dateStr)) {
+      appendBillItemRowsForDate_(billsSheet, dateStr, items);
+      metaSheet.appendRow([dateStr, fileId || '', '', '']);
+    } else {
+      throw new Error('A bill already exists for ' + dateStr + '. Delete it first if you want to replace it.');
+    }
   } else {
-    metaSheet.appendRow([dateStr, fileId || '', true, '']);
+    appendBillItemRowsForDate_(billsSheet, dateStr, items);
+    metaSheet.appendRow([dateStr, fileId || '', true, paidAmount]);
   }
 
   var billTotal = sumBillItemsTotals(items);
