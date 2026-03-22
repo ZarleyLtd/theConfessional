@@ -710,6 +710,77 @@
     return typeof n === 'number' && !isNaN(n) ? n.toFixed(2) : '0.00';
   }
 
+  function roundMoney2(n) {
+    return Math.round(n * 100) / 100;
+  }
+
+  /**
+   * Next total paid (B+T) when pressing + : smallest amount strictly greater than P0 that is
+   * any of: next tip on €5 grid, exact 5%/10%/15% tip on B, or total a multiple of €5.
+   */
+  function totalPaidNextStepUp(P0, B) {
+    var Bc = Math.round(B * 100);
+    var P0c = Math.round(P0 * 100);
+    if (Bc < 0 || P0c < Bc) P0c = Bc;
+    var T0c = P0c - Bc;
+    var cands = [];
+
+    var Tnext = Math.floor(T0c / 500) * 500 + 500;
+    cands.push(Bc + Tnext);
+
+    var mults = [1.05, 1.1, 1.15];
+    for (var i = 0; i < mults.length; i++) {
+      var pc = Math.round(B * mults[i] * 100);
+      if (pc > P0c) cands.push(pc);
+    }
+
+    var pMult5 = Math.floor(P0c / 500) * 500;
+    if (pMult5 <= P0c) pMult5 += 500;
+    cands.push(pMult5);
+
+    var best = null;
+    for (var j = 0; j < cands.length; j++) {
+      var c = cands[j];
+      if (c <= P0c || c < Bc) continue;
+      if (best === null || c < best) best = c;
+    }
+    return best === null ? roundMoney2(P0) : best / 100;
+  }
+
+  /** Previous total paid when pressing − : largest milestone strictly below P0, not below B. */
+  function totalPaidNextStepDown(P0, B) {
+    var Bc = Math.round(B * 100);
+    var P0c = Math.round(P0 * 100);
+    if (P0c < Bc) P0c = Bc;
+    var T0c = P0c - Bc;
+    var cands = [];
+
+    if (T0c > 0) {
+      var Tprev;
+      if (T0c % 500 === 0) Tprev = T0c - 500;
+      else Tprev = Math.floor((T0c - 1) / 500) * 500;
+      if (Tprev >= 0) cands.push(Bc + Tprev);
+    }
+
+    var mults = [1.05, 1.1, 1.15];
+    for (var i = 0; i < mults.length; i++) {
+      var pc = Math.round(B * mults[i] * 100);
+      if (pc < P0c && pc >= Bc) cands.push(pc);
+    }
+
+    var pMult5 = Math.floor((P0c - 1) / 500) * 500;
+    if (pMult5 >= Bc) cands.push(pMult5);
+
+    var best = null;
+    for (var j = 0; j < cands.length; j++) {
+      var c = cands[j];
+      if (c >= P0c || c < Bc) continue;
+      if (best === null || c > best) best = c;
+    }
+    if (best === null) return roundMoney2(B);
+    return best / 100;
+  }
+
   function renderBillUpload() {
     var section = document.getElementById('poweruser-upload-inline');
     if (!section) return;
@@ -747,7 +818,7 @@
       compress
         .then(function (imageData) {
           if (statusEl) statusEl.textContent = '';
-          showBTModalAndUpload(imageData);
+          showBillUploadFlowModal(imageData);
         })
         .catch(function (err) {
           if (statusEl) {
@@ -779,83 +850,367 @@
     if (galleryInput) galleryInput.addEventListener('change', function () { handleImageChosen(this); });
   }
 
-  function showBTModalAndUpload(imageData) {
+  function showBillUploadFlowModal(imageData) {
     var overlay = document.createElement('div');
     overlay.className = 'poweruser-modal-overlay poweruser-modal-overlay--bt';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-label', 'Enter total paid');
-    overlay.innerHTML = '<div class="poweruser-modal">' +
-      '<h3 class="poweruser-modal__title">Enter total paid including tip (B+T)</h3>' +
-      '<p class="poweruser-modal__hint poweruser-modal__step" id="poweruser-step-hint">Step 1: Analyzing bill with AI (Gemini)...</p>' +
-      '<input type="number" step="0.01" min="0" id="poweruser-paid-input" class="poweruser-modal__input" placeholder="e.g. 220.50">' +
-      '<div class="poweruser-modal__actions">' +
-      '<button type="button" class="poweruser-modal__cancel" id="poweruser-modal-cancel">Cancel</button>' +
-      '<button type="button" class="poweruser-modal__submit" id="poweruser-modal-submit">Submit</button>' +
-      '</div></div>';
+    overlay.setAttribute('aria-label', 'Bill upload');
+
+    var modal = document.createElement('div');
+    modal.className = 'poweruser-modal poweruser-modal--bill-flow';
+    modal.innerHTML =
+      '<h3 class="poweruser-modal__title" id="poweruser-bill-flow-title">Analyzing bill…</h3>' +
+      '<p class="poweruser-modal__hint" id="poweruser-bill-flow-hint">Step 1: Analyzing bill with AI (Gemini)…</p>' +
+      '<div id="poweruser-bill-flow-body"></div>' +
+      '<div id="poweruser-persist-banner" class="poweruser-persist-banner" role="alert" hidden></div>' +
+      '<div class="poweruser-modal__actions poweruser-modal__actions--bill-bt" id="poweruser-bill-flow-actions">' +
+      '<button type="button" class="poweruser-modal__cancel" id="poweruser-bill-flow-cancel">Cancel</button>' +
+      '<button type="button" class="poweruser-modal__submit" id="poweruser-bill-confirm" hidden disabled>Confirm</button>' +
+      '</div>';
+    overlay.appendChild(modal);
     document.body.appendChild(overlay);
+
+    var titleEl = modal.querySelector('#poweruser-bill-flow-title');
+    var hintEl = modal.querySelector('#poweruser-bill-flow-hint');
+    var bodyEl = modal.querySelector('#poweruser-bill-flow-body');
+    var persistBanner = modal.querySelector('#poweruser-persist-banner');
+
+    var state = {
+      jobId: null,
+      dateStr: null,
+      billTotal: 0,
+      persistPromise: null,
+      persistFailCount: 0,
+      persistSucceeded: false
+    };
 
     function closeModal() {
       if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
     }
 
-    document.getElementById('poweruser-modal-cancel').addEventListener('click', closeModal);
-    overlay.addEventListener('click', function (e) {
-      if (e.target === overlay) closeModal();
-    });
-
-    var phase1Promise = null;
-    if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.analyzeBillImage) {
-      phase1Promise = ClaimsAPI.analyzeBillImage({
-        base64: imageData.base64,
-        mimeType: imageData.mimeType
-      });
-    } else {
-      phase1Promise = Promise.reject(new Error('API not available'));
+    function hidePersistBanner() {
+      persistBanner.hidden = true;
+      persistBanner.innerHTML = '';
     }
 
-    var stepHint = document.getElementById('poweruser-step-hint');
+    function showPersistError(msg) {
+      persistBanner.hidden = false;
+      persistBanner.innerHTML =
+        '<p class="poweruser-persist-banner__text">' + escapeHtml(msg) + '</p>' +
+        '<button type="button" class="poweruser-modal__submit" id="poweruser-persist-retry">Retry save</button>';
+      persistBanner.querySelector('#poweruser-persist-retry').addEventListener('click', function () {
+        hidePersistBanner();
+        kickPersist();
+      });
+    }
 
-    document.getElementById('poweruser-modal-submit').addEventListener('click', function () {
-      var input = document.getElementById('poweruser-paid-input');
-      var paidStr = input && input.value ? input.value.trim() : '';
-      var paidAmount = parseFloat(paidStr);
-      if (isNaN(paidAmount) || paidAmount < 0) {
-        showErrorModal('Please enter a valid amount.');
+    function kickPersist() {
+      if (!state.jobId || typeof ClaimsAPI === 'undefined' || !ClaimsAPI.completeBillUpload) {
+        state.persistFailCount++;
+        if (state.persistFailCount >= 2) {
+          showErrorModal('API not available');
+          closeModal();
+        } else {
+          showPersistError('API not available');
+        }
         return;
       }
-      var submitBtn = document.getElementById('poweruser-modal-submit');
-      submitBtn.disabled = true;
-      submitBtn.textContent = 'Processing…';
-      if (stepHint) stepHint.textContent = 'Step 1: Completing analysis and checking for duplicates...';
-
-      phase1Promise
+      state.persistPromise = ClaimsAPI.completeBillUpload({
+        jobId: state.jobId,
+        base64: imageData.base64,
+        mimeType: imageData.mimeType
+      })
         .then(function (res) {
-          var jobId = res && res.jobId;
-          if (!jobId) throw new Error('No jobId from analysis');
-          if (stepHint) stepHint.textContent = 'Step 2: Saving to Drive and updating sheets...';
-          if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.completeBillUpload) {
-            return ClaimsAPI.completeBillUpload({
-              jobId: jobId,
-              paidAmount: paidAmount,
-              base64: imageData.base64,
-              mimeType: imageData.mimeType
-            });
+          state.persistSucceeded = true;
+          state.persistFailCount = 0;
+          hidePersistBanner();
+          refreshConfirmEnabled();
+          return res;
+        })
+        .catch(function (err) {
+          state.persistSucceeded = false;
+          state.persistFailCount++;
+          if (state.persistFailCount >= 2) {
+            showErrorModal(err.message || 'Failed to save bill');
+            closeModal();
+          } else {
+            showPersistError(err.message || 'Failed to save bill');
           }
-          throw new Error('API not available');
+          refreshConfirmEnabled();
+          return Promise.reject(err);
+        });
+    }
+
+    function refreshConfirmEnabled() {
+      var c = document.getElementById('poweruser-bill-confirm');
+      if (!c) return;
+      c.disabled = !state.persistSucceeded;
+      if (!state.persistSucceeded) {
+        c.setAttribute('title', 'Waiting for bill to save…');
+      } else {
+        c.removeAttribute('title');
+      }
+    }
+
+    function renderTipOptions() {
+      var B = state.billTotal;
+      var dateLabel = state.dateStr && typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
+        ? ClaimsFormatters.formatBillDateDisplay(state.dateStr) : state.dateStr;
+      var html = '<ul class="poweruser-bill-analysed-summary">';
+      html += '<li><strong>Bill Date:</strong> ' + escapeHtml(dateLabel) + '</li>';
+      html += '<li><strong>Bill Total:</strong> €' + formatNum(B) + '</li>';
+      html += '</ul>';
+      html += '<div class="poweruser-bt-stack">';
+      html += '<div class="poweruser-bt-row poweruser-bt-row--tip">';
+      html += '<label class="poweruser-bt-field__label" for="poweruser-bt-tip">Tip (€)</label>';
+      html += '<div class="poweruser-bt-tip-inline">';
+      html += '<input type="text" inputmode="decimal" autocomplete="off" id="poweruser-bt-tip" class="poweruser-modal__input poweruser-bt-input--narrow" placeholder="" aria-label="Tip in euros">';
+      html += '<span class="poweruser-bt-tip-pct" id="poweruser-bt-tip-pct" aria-live="polite">0%</span>';
+      html += '</div></div>';
+      html += '<div class="poweruser-bt-row poweruser-bt-row--total">';
+      html += '<label class="poweruser-bt-field__label" for="poweruser-bt-total">Total paid (€)</label>';
+      html += '<div class="poweruser-bt-total-stepper">';
+      html += '<button type="button" class="poweruser-bt-step-btn" id="poweruser-bt-minus" aria-label="Decrease total paid" title="Decrease">−</button>';
+      html += '<input type="text" inputmode="decimal" autocomplete="off" id="poweruser-bt-total" class="poweruser-modal__input poweruser-bt-input--narrow" aria-label="Total paid in euros">';
+      html += '<button type="button" class="poweruser-bt-step-btn" id="poweruser-bt-plus" aria-label="Increase total paid" title="Increase">+</button>';
+      html += '</div></div></div>';
+      bodyEl.innerHTML = html;
+
+      var tipInput = document.getElementById('poweruser-bt-tip');
+      var totalInput = document.getElementById('poweruser-bt-total');
+      var tipPctEl = document.getElementById('poweruser-bt-tip-pct');
+      var syncLock = false;
+
+      function parseMoney(str) {
+        if (str == null) return NaN;
+        var s = String(str).trim().replace(',', '.');
+        if (s === '') return NaN;
+        return parseFloat(s);
+      }
+
+      function tipDisplayFromAmount(tipAmt) {
+        if (tipAmt <= 1e-6) return '';
+        return formatNum(tipAmt);
+      }
+
+      function updateTipPctLabel() {
+        if (!tipPctEl) return;
+        if (!(B > 0)) {
+          tipPctEl.textContent = '—';
+          return;
+        }
+        var tot = parseMoney(totalInput.value);
+        if (isNaN(tot)) {
+          tipPctEl.textContent = '—';
+          return;
+        }
+        var tipAmt = roundMoney2(tot - B);
+        if (tipAmt <= 1e-6) {
+          tipPctEl.textContent = '0%';
+          return;
+        }
+        var pct = (tipAmt / B) * 100;
+        tipPctEl.textContent = pct.toFixed(1) + '%';
+      }
+
+      function currentTotalForStep() {
+        var P0 = parseMoney(totalInput.value);
+        if (isNaN(P0)) P0 = B;
+        return Math.max(roundMoney2(P0), B);
+      }
+
+      function refreshStepperButtons() {
+        var minus = document.getElementById('poweruser-bt-minus');
+        if (!minus) return;
+        minus.disabled = currentTotalForStep() <= B + 1e-6;
+      }
+
+      function applyTotalPaid(P) {
+        P = roundMoney2(P);
+        if (P < B) P = B;
+        var tipAmt = roundMoney2(P - B);
+        syncLock = true;
+        tipInput.value = tipDisplayFromAmount(tipAmt);
+        totalInput.value = formatNum(P);
+        syncLock = false;
+        updateTipPctLabel();
+        refreshStepperButtons();
+      }
+
+      function onTipInput() {
+        if (syncLock) return;
+        var s = tipInput.value.trim();
+        syncLock = true;
+        if (s === '') {
+          totalInput.value = formatNum(B);
+        } else {
+          var t = parseMoney(s);
+          if (!isNaN(t) && t >= 0) {
+            totalInput.value = formatNum(roundMoney2(B + t));
+          }
+        }
+        syncLock = false;
+        updateTipPctLabel();
+        refreshStepperButtons();
+      }
+
+      function onTotalInput() {
+        if (syncLock) return;
+        var s = totalInput.value.trim();
+        syncLock = true;
+        var tot = parseMoney(s);
+        if (s === '' || isNaN(tot)) {
+          tipInput.value = '';
+          totalInput.value = formatNum(B);
+        } else {
+          var tipAmt = roundMoney2(tot - B);
+          tipInput.value = tipDisplayFromAmount(tipAmt);
+          totalInput.value = formatNum(roundMoney2(tot));
+        }
+        syncLock = false;
+        updateTipPctLabel();
+        refreshStepperButtons();
+      }
+
+      applyTotalPaid(roundMoney2(B * 1.1));
+
+      tipInput.addEventListener('input', onTipInput);
+      tipInput.addEventListener('blur', function () {
+        if (syncLock) return;
+        var s = tipInput.value.trim();
+        syncLock = true;
+        if (s === '') {
+          totalInput.value = formatNum(B);
+        } else {
+          var t = parseMoney(s);
+          if (!isNaN(t) && t >= 0) {
+            tipInput.value = tipDisplayFromAmount(t);
+            totalInput.value = formatNum(roundMoney2(B + t));
+          }
+        }
+        syncLock = false;
+        updateTipPctLabel();
+        refreshStepperButtons();
+      });
+      totalInput.addEventListener('input', onTotalInput);
+      totalInput.addEventListener('blur', function () {
+        if (syncLock) return;
+        var tot = parseMoney(totalInput.value);
+        if (isNaN(tot)) return;
+        syncLock = true;
+        var tipAmt = roundMoney2(tot - B);
+        tipInput.value = tipDisplayFromAmount(tipAmt);
+        totalInput.value = formatNum(roundMoney2(tot));
+        syncLock = false;
+        updateTipPctLabel();
+        refreshStepperButtons();
+      });
+
+      document.getElementById('poweruser-bt-minus').addEventListener('click', function () {
+        var P1 = totalPaidNextStepDown(currentTotalForStep(), B);
+        applyTotalPaid(P1);
+      });
+      document.getElementById('poweruser-bt-plus').addEventListener('click', function () {
+        var P1 = totalPaidNextStepUp(currentTotalForStep(), B);
+        applyTotalPaid(P1);
+      });
+
+      var confirmBtn = document.getElementById('poweruser-bill-confirm');
+      if (confirmBtn) {
+        confirmBtn.hidden = false;
+      }
+      refreshConfirmEnabled();
+      if (state.persistPromise && typeof state.persistPromise.then === 'function') {
+        state.persistPromise.then(function () { refreshConfirmEnabled(); }).catch(function () { refreshConfirmEnabled(); });
+      }
+    }
+
+    function readTotalPaidFromForm() {
+      var totalInput = document.getElementById('poweruser-bt-total');
+      var tipInput = document.getElementById('poweruser-bt-tip');
+      var B = state.billTotal;
+      if (!totalInput) return NaN;
+      var tot = parseFloat(String(totalInput.value).trim().replace(',', '.'));
+      if (isNaN(tot)) {
+        var s = tipInput && tipInput.value.trim();
+        if (s === '') return B;
+        var t = parseFloat(s.replace(',', '.'));
+        if (!isNaN(t) && t >= 0) return roundMoney2(B + t);
+        return NaN;
+      }
+      return roundMoney2(tot);
+    }
+
+    modal.querySelector('#poweruser-bill-confirm').addEventListener('click', function onBtConfirm() {
+      var btn = document.getElementById('poweruser-bill-confirm');
+      if (!state.persistSucceeded || btn.hidden) return;
+      var totalPaid = readTotalPaidFromForm();
+      if (isNaN(totalPaid) || totalPaid < state.billTotal - 1e-6) {
+        showErrorModal('Enter a valid total at least equal to the bill total (€' + formatNum(state.billTotal) + ').');
+        return;
+      }
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Saving…';
+      }
+      function updateOnce() {
+        return ClaimsAPI.updateBillTotalPaid({
+          date: state.dateStr,
+          totalPaid: totalPaid
+        });
+      }
+      state.persistPromise
+        .then(function () {
+          if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.updateBillTotalPaid) throw new Error('API not available');
+          return updateOnce().catch(function () {
+            return updateOnce();
+          });
         })
         .then(function (result) {
           closeModal();
           showUploadSuccess(result);
         })
         .catch(function (err) {
-          submitBtn.disabled = false;
-          submitBtn.textContent = 'Submit';
-          if (stepHint) stepHint.textContent = 'Step 1: Analyzing bill with AI (Gemini)...';
-          closeModal();
-          showErrorModal(err.message || 'Upload failed');
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Confirm';
+          }
+          refreshConfirmEnabled();
+          showErrorModal(err.message || 'Failed to update total paid');
         });
     });
+
+    modal.querySelector('#poweruser-bill-flow-cancel').addEventListener('click', closeModal);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) closeModal();
+    });
+
+    if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.analyzeBillImage) {
+      showErrorModal('API not available');
+      closeModal();
+      return;
+    }
+
+    ClaimsAPI.analyzeBillImage({
+      base64: imageData.base64,
+      mimeType: imageData.mimeType
+    })
+      .then(function (res) {
+        if (!res || !res.jobId) throw new Error('No jobId from analysis');
+        state.jobId = res.jobId;
+        state.dateStr = res.date || '';
+        state.billTotal = typeof res.billTotal === 'number' ? res.billTotal : parseFloat(res.billTotal);
+        if (isNaN(state.billTotal)) state.billTotal = 0;
+        titleEl.textContent = 'Bill successfully analysed';
+        hintEl.textContent = '';
+        renderTipOptions();
+        kickPersist();
+      })
+      .catch(function (err) {
+        showErrorModal(err.message || 'Analysis failed');
+        closeModal();
+      });
   }
 
   function showUploadSuccess(result) {

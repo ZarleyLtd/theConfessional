@@ -85,6 +85,8 @@ function doPost(e) {
       result.data = analyzeBillImage(body);
     } else if (action === 'completeBillUpload') {
       result.data = completeBillUpload(body);
+    } else if (action === 'updateBillTotalPaid') {
+      result.data = updateBillTotalPaid(body);
     } else if (action === 'deleteBill') {
       result.data = deleteBill(body);
     } else if (action === 'setBillOpen') {
@@ -707,6 +709,18 @@ function submitClaims(body) {
   return { ok: true, count: claims.length, claims: updatedClaims };
 }
 
+/** Sum line totals from parsed bill items (same logic as sheet rows). */
+function sumBillItemsTotals(items) {
+  var arr = items || [];
+  return arr.reduce(function (sum, it) {
+    var tp = parseFloat(it.total_price);
+    if (!isNaN(tp)) return sum + tp;
+    var up = parseFloat(it.unit_price) || 0;
+    var q = parseInt(it.quantity, 10) || 1;
+    return sum + up * q;
+  }, 0);
+}
+
 /**
  * Power user: Phase 1 - analyze bill image with Gemini, store result, return jobId.
  * body: { base64: string, mimeType: string }
@@ -754,7 +768,8 @@ function analyzeBillImage(body) {
   }
   var jobId = Utilities.getUuid();
   PropertiesService.getScriptProperties().setProperty('billUpload_' + jobId, JSON.stringify(parsed));
-  return { jobId: jobId };
+  var billTotal = sumBillItemsTotals(parsed.items);
+  return { jobId: jobId, date: dateStr, billTotal: billTotal };
 }
 
 function parseGeminiBillJson(text) {
@@ -767,16 +782,19 @@ function parseGeminiBillJson(text) {
 }
 
 /**
- * Power user: Phase 2 - complete upload using jobId + paidAmount.
- * body: { jobId: string, paidAmount: number, base64: string, mimeType: string }
+ * Power user: Phase 2 - complete upload using jobId (+ optional paidAmount).
+ * body: { jobId: string, base64: string, mimeType: string, paidAmount?: number }
+ * If paidAmount omitted, TotalPaid is left blank for a later updateBillTotalPaid call.
  */
 function completeBillUpload(body) {
   var jobId = body.jobId;
-  var paidAmount = parseFloat(body.paidAmount);
+  var rawPaid = body.paidAmount;
+  var hasPaidAmount = rawPaid !== undefined && rawPaid !== null && String(rawPaid).trim() !== '';
+  var paidAmount = hasPaidAmount ? parseFloat(rawPaid) : NaN;
   var base64 = body.base64;
   var mimeType = body.mimeType || 'image/jpeg';
   if (!jobId) throw new Error('Missing jobId');
-  if (isNaN(paidAmount) || paidAmount < 0) throw new Error('Invalid paidAmount');
+  if (hasPaidAmount && (isNaN(paidAmount) || paidAmount < 0)) throw new Error('Invalid paidAmount');
 
   var stored = PropertiesService.getScriptProperties().getProperty('billUpload_' + jobId);
   if (!stored) throw new Error('Analysis expired or invalid jobId');
@@ -818,24 +836,67 @@ function completeBillUpload(body) {
   if (!hasTotalPaid && metaSheet.getLastRow() === 1) {
     metaSheet.getRange(1, 4).setValue('TotalPaid');
   }
-  metaSheet.appendRow([dateStr, fileId || '', true, paidAmount]);
+  if (hasPaidAmount) {
+    metaSheet.appendRow([dateStr, fileId || '', true, paidAmount]);
+  } else {
+    metaSheet.appendRow([dateStr, fileId || '', true, '']);
+  }
 
-  var billTotal = items.reduce(function (sum, it) {
-    var tp = parseFloat(it.total_price);
-    if (!isNaN(tp)) return sum + tp;
-    var up = parseFloat(it.unit_price) || 0;
-    var q = parseInt(it.quantity, 10) || 1;
-    return sum + up * q;
-  }, 0);
-  var tipAmount = Math.max(0, paidAmount - billTotal);
+  var billTotal = sumBillItemsTotals(items);
+  var tipAmount = hasPaidAmount ? Math.max(0, paidAmount - billTotal) : null;
 
   PropertiesService.getScriptProperties().deleteProperty('billUpload_' + jobId);
   return {
     date: dateStr,
     billTotal: billTotal,
     tipAmount: tipAmount,
-    totalPaid: paidAmount
+    totalPaid: hasPaidAmount ? paidAmount : null
   };
+}
+
+/**
+ * Power user: set TotalPaid on an existing BillMeta row (after optional completeBillUpload).
+ * body: { date: string, totalPaid: number }
+ */
+function updateBillTotalPaid(body) {
+  var dateStr = formatDate(body.date);
+  if (!dateStr) throw new Error('Invalid date');
+  var paid = parseFloat(body.totalPaid);
+  if (isNaN(paid) || paid < 0) throw new Error('Invalid totalPaid');
+
+  var billData = getBillForDate(dateStr);
+  var billTotal = sumBillItemsTotals(billData.items);
+  var tipAmount = Math.max(0, paid - billTotal);
+
+  var ss = getSpreadsheet();
+  var metaSheet = ss.getSheetByName(SHEETS.BILL_META);
+  if (!metaSheet) throw new Error('BillMeta sheet not found');
+
+  var metaData = metaSheet.getDataRange().getValues();
+  var metaHeader = metaData[0];
+  var metaDateCol = metaHeader.indexOf('Date');
+  var totalPaidCol = -1;
+  for (var h = 0; h < metaHeader.length; h++) {
+    if ((metaHeader[h] || '').toString().toLowerCase() === 'totalpaid') {
+      totalPaidCol = h;
+      break;
+    }
+  }
+  if (totalPaidCol < 0 && metaHeader.length >= 4) totalPaidCol = 3;
+  if (metaDateCol < 0 || totalPaidCol < 0) throw new Error('BillMeta missing Date or TotalPaid column');
+
+  for (var j = 1; j < metaData.length; j++) {
+    if (formatDate(metaData[j][metaDateCol]) === dateStr) {
+      metaSheet.getRange(j + 1, totalPaidCol + 1).setValue(paid);
+      return {
+        date: dateStr,
+        billTotal: billTotal,
+        tipAmount: tipAmount,
+        totalPaid: paid
+      };
+    }
+  }
+  throw new Error('No BillMeta row found for date ' + dateStr);
 }
 
 function getOrCreateDriveFolder(name) {

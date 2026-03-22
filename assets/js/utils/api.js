@@ -50,6 +50,7 @@
     getBillFull: function (date) { return get('getBillFull', { date: date }); },
     analyzeBillImage: function (payload) { return post('analyzeBillImage', payload); },
     completeBillUpload: function (payload) { return post('completeBillUpload', payload); },
+    updateBillTotalPaid: function (payload) { return post('updateBillTotalPaid', payload); },
     deleteBill: function (payload) { return post('deleteBill', payload); },
     setBillOpen: function (payload) { return post('setBillOpen', payload); }
   };
