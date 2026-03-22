@@ -862,9 +862,14 @@ body {
 }
 .poweruser-add-bar {
   margin-bottom: 0.5rem;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 0.5rem;
 }
 .poweruser-add-bar .poweruser-add-bill {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
   padding: 0.75rem 1rem;
   font-size: 1.5rem;
@@ -881,9 +886,53 @@ body {
   align-items: center;
   justify-content: center;
 }
+.poweruser-add-bar .poweruser-add-bill--narrow {
+  flex: 0 0 auto;
+  aspect-ratio: 2 / 1;
+  width: auto;
+  min-height: 0;
+  align-self: stretch;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
 .poweruser-add-bar .poweruser-add-bill:hover {
   background: #334155;
   color: #f1f5f9;
+}
+.poweruser-model-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+}
+.poweruser-model-pick-btn {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 1rem;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: left;
+  color: #e2e8f0;
+  background: #334155;
+  border: 1px solid #475569;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+.poweruser-model-pick-btn:hover {
+  background: #475569;
+  border-color: #64748b;
+  color: #f8fafc;
+}
+.poweruser-modal--model-pick .poweruser-modal__message {
+  margin-top: 0.25rem;
+  margin-bottom: 0;
+  color: #94a3b8;
+  font-size: 0.875rem;
 }
 .poweruser-upload-inline {
   display: none;

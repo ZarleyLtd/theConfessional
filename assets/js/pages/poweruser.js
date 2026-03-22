@@ -7,6 +7,13 @@
   var rootEl;
   var reviewState = { billsData: null, viewModeByDate: {}, expandedDate: null, billCache: {}, billFetchPromises: {}, billImageCache: {} };
 
+  /** ++ button: must match `GEMINI_BILL_ALLOWED_MODELS` in backend `code.gs`. */
+  var ALT_GEMINI_MODEL_CHOICES = [
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+    { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
+    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' }
+  ];
+
   function getViewModeForBill(dateStr) {
     return reviewState.viewModeByDate[dateStr] || 'byItem';
   }
@@ -68,7 +75,10 @@
     html += '<div class="poweruser-content">';
     html += '<div class="poweruser-main-wrap">';
     html += '<section id="poweruser-review" class="poweruser-section poweruser-section--active">';
-    html += '<div class="poweruser-add-bar"><button type="button" class="poweruser-add-bill" id="poweruser-add-bill" title="Upload new bill" aria-label="Upload new bill">+</button></div>';
+    html += '<div class="poweruser-add-bar">' +
+      '<button type="button" class="poweruser-add-bill" id="poweruser-add-bill" title="Upload new bill" aria-label="Upload new bill">+</button>' +
+      '<button type="button" class="poweruser-add-bill poweruser-add-bill--narrow" id="poweruser-add-bill-alt" title="Upload with alternate Gemini model" aria-label="Upload with alternate AI model">++</button>' +
+      '</div>';
     html += '<div id="poweruser-upload-inline" class="poweruser-upload-inline"></div>';
     html += '<div id="poweruser-review-list"></div>';
     html += '</section>';
@@ -85,6 +95,18 @@
         if (isOpen) {
           renderBillUpload();
         }
+      });
+    }
+
+    var addBtnAlt = document.getElementById('poweruser-add-bill-alt');
+    if (addBtnAlt) {
+      addBtnAlt.addEventListener('click', function () {
+        showGeminiModelPicker(function (picked) {
+          var uploadSection = document.getElementById('poweruser-upload-inline');
+          if (!uploadSection) return;
+          uploadSection.classList.add('poweruser-upload-inline--open');
+          renderBillUpload({ geminiModel: picked.id, modelLabel: picked.label });
+        });
       });
     }
 
@@ -693,6 +715,54 @@
     }
   }
 
+  /**
+   * @param {function({ id: string, label: string })} onPick
+   */
+  function showGeminiModelPicker(onPick) {
+    var overlay = document.createElement('div');
+    overlay.className = 'poweruser-modal-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Choose AI model');
+
+    var modal = document.createElement('div');
+    modal.className = 'poweruser-modal poweruser-modal--model-pick';
+    var inner = '<h3 class="poweruser-modal__title">Choose AI model</h3>' +
+      '<p class="poweruser-modal__message">Same upload flow as + after you pick a model.</p>' +
+      '<div class="poweruser-model-pick-list" role="group" aria-label="Gemini models">';
+    for (var i = 0; i < ALT_GEMINI_MODEL_CHOICES.length; i++) {
+      var opt = ALT_GEMINI_MODEL_CHOICES[i];
+      inner += '<button type="button" class="poweruser-model-pick-btn" data-model-id="' + opt.id + '">' +
+        escapeHtml(opt.label) + '</button>';
+    }
+    inner += '</div>' +
+      '<div class="poweruser-modal__actions">' +
+      '<button type="button" class="poweruser-modal__cancel" id="poweruser-model-pick-cancel">Cancel</button>' +
+      '</div>';
+    modal.innerHTML = inner;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function closePicker() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+
+    modal.addEventListener('click', function (e) {
+      var t = e.target;
+      if (t && t.classList && t.classList.contains('poweruser-model-pick-btn')) {
+        var id = t.getAttribute('data-model-id');
+        var label = (t.textContent || '').trim();
+        closePicker();
+        if (id && typeof onPick === 'function') onPick({ id: id, label: label });
+      }
+    });
+
+    modal.querySelector('#poweruser-model-pick-cancel').addEventListener('click', closePicker);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) closePicker();
+    });
+  }
+
   function showErrorModal(message) {
     var overlay = document.createElement('div');
     overlay.className = 'poweruser-modal-overlay';
@@ -796,7 +866,16 @@
     return { paid: best.c / 100, driver: best.driver };
   }
 
-  function renderBillUpload() {
+  /**
+   * @param {Object} [options]
+   * @param {string} [options.geminiModel] - API model id for ++ path only
+   * @param {string} [options.modelLabel] - Human label for progress hint
+   */
+  function renderBillUpload(options) {
+    options = options || {};
+    var billGeminiModel = options.geminiModel || null;
+    var billModelLabel = options.modelLabel || null;
+
     var section = document.getElementById('poweruser-upload-inline');
     if (!section) return;
     var html = '<div class="poweruser-upload-area">';
@@ -833,7 +912,10 @@
       compress
         .then(function (imageData) {
           if (statusEl) statusEl.textContent = '';
-          showBillUploadFlowModal(imageData);
+          showBillUploadFlowModal(imageData, {
+            geminiModel: billGeminiModel,
+            modelLabel: billModelLabel
+          });
         })
         .catch(function (err) {
           if (statusEl) {
@@ -865,7 +947,12 @@
     if (galleryInput) galleryInput.addEventListener('change', function () { handleImageChosen(this); });
   }
 
-  function showBillUploadFlowModal(imageData) {
+  function showBillUploadFlowModal(imageData, flowOpts) {
+    flowOpts = flowOpts || {};
+    var initialHint = flowOpts.modelLabel
+      ? ('Step 1: Analyzing with ' + flowOpts.modelLabel + '…')
+      : 'Step 1: Analyzing bill with AI (Gemini)…';
+
     var overlay = document.createElement('div');
     overlay.className = 'poweruser-modal-overlay poweruser-modal-overlay--bt';
     overlay.setAttribute('role', 'dialog');
@@ -876,7 +963,7 @@
     modal.className = 'poweruser-modal poweruser-modal--bill-flow';
     modal.innerHTML =
       '<h3 class="poweruser-modal__title" id="poweruser-bill-flow-title">Analyzing bill…</h3>' +
-      '<p class="poweruser-modal__hint" id="poweruser-bill-flow-hint">Step 1: Analyzing bill with AI (Gemini)…</p>' +
+      '<p class="poweruser-modal__hint" id="poweruser-bill-flow-hint">' + escapeHtml(initialHint) + '</p>' +
       '<div id="poweruser-bill-flow-body"></div>' +
       '<div id="poweruser-persist-banner" class="poweruser-persist-banner" role="alert" hidden></div>' +
       '<div class="poweruser-modal__actions poweruser-modal__actions--bill-bt" id="poweruser-bill-flow-actions">' +
@@ -1276,10 +1363,15 @@
       return;
     }
 
-    ClaimsAPI.analyzeBillImage({
+    var analyzePayload = {
       base64: imageData.base64,
       mimeType: imageData.mimeType
-    })
+    };
+    if (flowOpts.geminiModel) {
+      analyzePayload.geminiModel = flowOpts.geminiModel;
+    }
+
+    ClaimsAPI.analyzeBillImage(analyzePayload)
       .then(function (res) {
         if (!res || !res.jobId) throw new Error('No jobId from analysis');
         state.jobId = res.jobId;

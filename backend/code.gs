@@ -738,9 +738,17 @@ function sumBillItemsTotals(items) {
   }, 0);
 }
 
+/** Default model for standard (+) bill upload. Alternate models only when body.geminiModel is set and whitelisted. */
+var GEMINI_BILL_DEFAULT_MODEL = 'gemini-2.5-flash';
+var GEMINI_BILL_ALLOWED_MODELS = {
+  'gemini-2.5-flash-lite': true,
+  'gemini-3-flash-preview': true,
+  'gemini-3.1-flash-lite-preview': true
+};
+
 /**
  * Power user: Phase 1 - analyze bill image with Gemini, store result, return jobId.
- * body: { base64: string, mimeType: string }
+ * body: { base64: string, mimeType: string, geminiModel?: string }
  */
 function analyzeBillImage(body) {
   var base64 = body.base64;
@@ -750,8 +758,13 @@ function analyzeBillImage(body) {
   var apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   if (!apiKey) throw new Error('GEMINI_API_KEY not set in script properties');
 
+  var modelId = GEMINI_BILL_DEFAULT_MODEL;
+  if (body.geminiModel && GEMINI_BILL_ALLOWED_MODELS[body.geminiModel]) {
+    modelId = body.geminiModel;
+  }
+
   var prompt = 'Analyze this receipt/bill image and extract all line items. Return ONLY valid JSON (no markdown, no code blocks) with this exact structure: {"date":"YYYY-MM-DD","items":[{"category":"Food" or "Fries" or "Drink","description":"item name","quantity":1,"unit_price":12.00,"total_price":12.00}]}. Use category "Food" for main dishes/sandwiches, "Fries" for fries/sides, "Drink" for beverages. If you cannot determine the date, use today in YYYY-MM-DD.';
-  var url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(apiKey);
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + modelId + ':generateContent?key=' + encodeURIComponent(apiKey);
   var payload = {
     contents: [{
       parts: [
