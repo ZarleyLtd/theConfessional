@@ -10,9 +10,14 @@
   /** ++ button: must match `GEMINI_BILL_ALLOWED_MODELS` in backend `code.gs`. */
   var ALT_GEMINI_MODEL_CHOICES = [
     { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     { id: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
-    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' }
+    { id: 'gemini-3.1-flash-lite-preview', label: 'Gemini 3.1 Flash Lite' },
+    { id: 'gemma-3-27b-it', label: 'Gemma 2 27B' }
   ];
+
+  /** Display name for the (+) path; must match `GEMINI_BILL_DEFAULT_MODEL` in `code.gs`. */
+  var DEFAULT_BILL_MODEL_LABEL = 'Gemini 3 Flash';
 
   function getViewModeForBill(dateStr) {
     return reviewState.viewModeByDate[dateStr] || 'byItem';
@@ -875,6 +880,9 @@
     options = options || {};
     var billGeminiModel = options.geminiModel || null;
     var billModelLabel = options.modelLabel || null;
+    if (!billModelLabel) {
+      billModelLabel = DEFAULT_BILL_MODEL_LABEL;
+    }
 
     var section = document.getElementById('poweruser-upload-inline');
     if (!section) return;
@@ -949,9 +957,8 @@
 
   function showBillUploadFlowModal(imageData, flowOpts) {
     flowOpts = flowOpts || {};
-    var initialHint = flowOpts.modelLabel
-      ? ('Step 1: Analyzing with ' + flowOpts.modelLabel + '…')
-      : 'Step 1: Analyzing bill with AI (Gemini)…';
+    var modelName = flowOpts.modelLabel || DEFAULT_BILL_MODEL_LABEL;
+    var initialHint = 'Step 1: Processing with ' + modelName + '…';
 
     var overlay = document.createElement('div');
     overlay.className = 'poweruser-modal-overlay poweruser-modal-overlay--bt';
@@ -1132,7 +1139,7 @@
         el.classList.add('poweruser-bt-flash-bold');
         window.setTimeout(function () {
           el.classList.remove('poweruser-bt-flash-bold');
-        }, 500);
+        }, 1000);
       }
 
       function selectAllOnFocus(el) {

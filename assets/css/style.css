@@ -934,6 +934,9 @@ body {
   color: #94a3b8;
   font-size: 0.875rem;
 }
+.poweruser-modal--model-pick .poweruser-modal__actions {
+  margin-top: 1.25rem;
+}
 .poweruser-upload-inline {
   display: none;
   margin-bottom: 0.75rem;

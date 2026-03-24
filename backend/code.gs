@@ -739,11 +739,14 @@ function sumBillItemsTotals(items) {
 }
 
 /** Default model for standard (+) bill upload. Alternate models only when body.geminiModel is set and whitelisted. */
-var GEMINI_BILL_DEFAULT_MODEL = 'gemini-2.5-flash';
+var GEMINI_BILL_DEFAULT_MODEL = 'gemini-3-flash-preview';
 var GEMINI_BILL_ALLOWED_MODELS = {
+  'gemini-2.5-flash': true,
   'gemini-2.5-flash-lite': true,
   'gemini-3-flash-preview': true,
-  'gemini-3.1-flash-lite-preview': true
+  'gemini-3.1-flash-lite-preview': true,
+  /** Hosted Gemma 27B on the Gemini API (see Gemma on Gemini API docs). */
+  'gemma-3-27b-it': true
 };
 
 /**
