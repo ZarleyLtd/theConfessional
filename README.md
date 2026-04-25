@@ -1,45 +1,37 @@
 # Bar Bill Claims (theConfessional)
 
-A small web app for **claiming** bar bill items (food and drink). Users pick a bill date, identify themselves, then tap icon-style buttons to claim or un-claim each unit. Data is stored in Google Sheets via a Google Apps Script Web App.
+A small web app for **claiming** bar bill items (food and drink). Users pick a bill date, identify themselves, then tap icon-style buttons to claim or un-claim each unit. Data and bill images are stored in Supabase and served by a Supabase Edge Function.
 
 ## Setup
 
-### 1. Google Sheet
+### 1. Supabase project
 
-Create a Google Sheet with three tabs:
+Create a Supabase project and provision:
 
-- **Config**  
-  - Column **Name**: one name per row (for the combobox). Optional extra columns later (e.g. ProductIcon).
+- Schema: `theConfessional`
+- Bucket: `theConfessional` (private)
+- Tables from `supabase/migrations/20260425223000_theconfessional_schema.sql`
+- Bucket migration from `supabase/migrations/20260425223100_theconfessional_bucket.sql`
 
-- **Bills**  
-  Headers: **Date**, **RowIndex**, **Category**, **Description**, **Quantity**, **UnitPrice**, **TotalPrice**  
-  - One row per line item. **Date** = YYYY-MM-DD. **RowIndex** = 0-based index for that date (optional; if empty, indices are generated). **Category** = "Food" or "Drink". **Quantity** = number of units (e.g. 4 pints).
+Set secrets for Edge Functions:
 
-- **Claims**  
-  Headers: **Date**, **UserName**, **RowIndex**, **UnitIndex**  
-  - One row per claimed unit. **RowIndex** / **UnitIndex** refer to the Bills row and which unit (0 to Quantity-1).
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_DB_URL` (port `5432`, required for transactional `submitClaims`)
+- `GEMINI_API_KEY`
 
-- **ProductIcons** (optional)  
-  Headers: **Product**, **Image**  
-  - Maps product descriptions to image files. **Product** = text to match (case-insensitive, partial match: e.g. "Guinness" matches "Pt Guinness 0.0"). **Image** = filename (e.g. `GuinnessPint.png`). Images live in `assets/images/`. Longer matches take precedence. If no match, built-in rules and emoji fallbacks apply.
+Deploy edge function:
 
-- **BillMeta** (optional)  
-  Headers: **Date**, **BillImageId**  
-  - One row per bill date. **Date** = YYYY-MM-DD. **BillImageId** = Google Drive file ID of the original bill image. When set, a "View original bill" link appears on the claims page for that date. Upload flow can be added later; until then you can add a row manually (upload the image to Drive, set sharing to "Anyone with the link can view", paste the file ID into BillImageId).
+- `supabase functions deploy theconfessional-api --no-verify-jwt`
 
-Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills** (see `sampledata` for the item shape) so the bill list has clickable dates.
+Optional migration from legacy Google backend:
+- `node scripts/migrate-google-to-supabase.mjs` (uses `LEGACY_API_URL`)
+- `node scripts/migrate-local-images-to-supabase.mjs <folder>` for exported local images.
 
-### 2. Backend (Google Apps Script)
+### 2. Frontend
 
-1. In the same Google Sheet: **Extensions** → **Apps Script**. Delete default code.
-2. Paste the contents of `backend/code.gs`. Save the project.
-3. **Deploy** → **New deployment** → type **Web app**.
-4. Set **Execute as**: Me, **Who has access**: Anyone (or Anyone with Google account). Deploy.
-5. Copy the Web App URL.
-
-### 3. Frontend
-
-1. Open `assets/js/config/sheets-config.js` and set `API_URL` to your Web App URL (replace the placeholder or the whole URL).
+1. Open `assets/js/config/sheets-config.js` and set `API_URL` to your function URL:
+   `https://<project-ref>.supabase.co/functions/v1/theconfessional-api`
 2. Serve the project (e.g. deploy to GitHub Pages or any static host). For local testing, use a simple HTTP server (e.g. `npx serve .`) so the Google Apps Script backend is not blocked by CORS. No build step is required.
 
 ## Usage
@@ -47,36 +39,31 @@ Add at least one row to **Config** (e.g. "Alice") and one day of data to **Bills
 1. Open the app. Choose a date (only dates that have data in **Bills** are clickable).
 2. Select or type your name.
 3. Click product buttons to claim; click again to un-claim. Greyed-out buttons are claimed by others.
-4. Click **Submit my claims** to save to the sheet. If a bill has an image stored (BillMeta.BillImageId), a **View original bill** link is shown on the products view.
+4. Click **Submit my claims** to save. If a bill has an image stored, a **View original bill** link is shown on the products view.
 
-## Troubleshooting – ProductIcons / images not showing
+## Troubleshooting
 
-1. **Redeploy the Apps Script** – After any change to `code.gs` (including `getProductIcons`, BillMeta, or `getBillForDate`), you must create a **new deployment** (or edit the existing one and deploy a new version). The live Web App runs the code from the last deployment. If "View original bill" never appears even though BillMeta has a row for that date, redeploy and try again.
-
-2. **Sheet name** – The tab must be named exactly `ProductIcons` (no space, that capitalization).
-
-3. **Column headers** – First row must include `Product` and `Image` (case doesn’t matter). Trailing spaces are ignored.
-
-4. **Image filenames** – Must match exactly, including case (e.g. `goujons.png` vs `Goujons.png`). Files live in `assets/images/`.
-
-5. **Subdirectory hosting** – If the app is served from a subpath (e.g. `yoursite.com/theConfessional/`), add `BASE_PATH: '/theConfessional'` to `CONFIRMATIONAL_CONFIG` in `sheets-config.js`.
-
-6. **Check the console** – If ProductIcons fails to load, a warning is logged. Open Developer Tools → Console to see it.
+1. Redeploy the edge function after backend changes.
+2. Confirm the migration SQL was applied and schema is exposed as `theConfessional`.
+3. Confirm bucket `theConfessional` exists and is private.
+4. Ensure `SUPABASE_DB_URL` points at direct Postgres (`db.<ref>.supabase.co:5432`).
+5. If images fail, verify object paths in `bills.image_path` and storage object existence.
 
 ## Tech stack
 
 - **Frontend**: Vanilla JS, plain CSS (no framework). Single stylesheet: `assets/css/style.css` with semantic/BEM-style class names (e.g. `app`, `claims-modal`, `claims-name__input`).
-- **Backend**: Google Apps Script; data in Google Sheets.
+- **Backend**: Supabase Edge Function + Postgres + Supabase Storage.
 
 ## Files
 
 - `index.html` – Single-page app shell.
 - `assets/css/style.css` – All styles; semantic class names for layout, modal, product rows, summary, and products view.
-- `assets/js/config/sheets-config.js` – API URL (single source of truth for the Web App URL).
+- `assets/js/config/sheets-config.js` – API URL (single source of truth for the backend endpoint).
 - `assets/js/utils/` – api, formatters, claims-state.
 - `assets/js/components/` – name-combobox, product-row, summary.
 - `assets/js/pages/claims.js` – Claims page logic.
 - `assets/js/main.js` – Entry point.
-- `backend/code.gs` – Google Apps Script Web App.
-Bill image upload (power-user) can be added later; the **Bills** sheet is expected to be filled by a separate process (e.g. manual entry or future script that matches the `sampledata` structure).
+- `supabase/functions/theconfessional-api/index.ts` – Supabase Edge Function backend.
+- `supabase/migrations/` – schema + bucket migrations.
+- `scripts/` – one-time migration scripts.
 

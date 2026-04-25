@@ -1,0 +1,7 @@
+project_id = "theconfessional"
+
+[api]
+enabled = true
+
+[functions.theconfessional-api]
+verify_jwt = false

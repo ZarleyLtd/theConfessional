@@ -1,4 +1,8 @@
 {
   "name": "the-confessional",
-  "private": true
+  "private": true,
+  "scripts": {
+    "migrate:google": "node scripts/migrate-google-to-supabase.mjs",
+    "migrate:images": "node scripts/migrate-local-images-to-supabase.mjs"
+  }
 }

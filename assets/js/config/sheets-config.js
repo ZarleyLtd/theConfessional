@@ -1,9 +1,9 @@
 /**
- * Single source of truth for Google Apps Script Web App URL.
- * Replace with your deployed Web App URL after deploying backend/code.gs.
+ * Single source of truth for backend API URL.
+ * Replace with your deployed Supabase Edge Function URL.
  * Must be on window so api.js (loaded after) can read it; top-level const is not on window in browsers.
  */
 var CONFIRMATIONAL_CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbzkYg-6uqb5ieg9YJYWSNViU6XlvMfzyqAgMPAm6mnBz272D07uCZ6ersLDDNgIeTfk2A/exec',
+  API_URL: 'https://yzyipxvlsoxfphwobfkb.supabase.co/functions/v1/theconfessional-api',
   BASE_PATH: ''  // e.g. '/theConfessional' if served from a subpath
 };

@@ -1,5 +1,5 @@
 /**
- * API wrappers for Bar Bill Claims backend (Google Apps Script Web App).
+ * API wrappers for Bar Bill Claims backend (Supabase Edge Function).
  */
 
 (function (global) {
