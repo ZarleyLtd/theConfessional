@@ -1059,22 +1059,6 @@ body {
   flex-shrink: 0;
   padding-right: 0.5rem;
 }
-.poweruser-bill-toggle-view {
-  padding: 0.35rem 0.6rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: #94a3b8;
-  background: transparent;
-  border: 1px solid #64748b;
-  border-radius: 0.375rem;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background-color 0.2s, color 0.2s;
-}
-.poweruser-bill-toggle-view:hover {
-  background: rgba(100, 116, 139, 0.2);
-  color: #cbd5e1;
-}
 .poweruser-bill-delete {
   flex-shrink: 0;
   padding: 0.35rem 0.6rem;
@@ -1119,8 +1103,57 @@ body {
   color: #fbbf24;
 }
 .poweruser-bill-body {
-  padding: 0 1rem 1rem;
+  padding: 0.75rem 1rem 1rem;
   border-top: 1px solid #334155;
+}
+.poweruser-view-tab-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin: 0;
+}
+.poweruser-view-tab-headings {
+  display: flex;
+  gap: 0;
+}
+.poweruser-view-tab {
+  border: 1px solid #475569;
+  border-bottom: none;
+  border-radius: 0.5rem 0.5rem 0 0;
+  padding: 0.45rem 1.125rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  font-family: inherit;
+  background: rgba(15, 23, 42, 0.65);
+  color: #94a3b8;
+  cursor: pointer;
+  position: relative;
+  top: 1px;
+  transition: background-color 0.2s, color 0.2s;
+}
+.poweruser-view-tab + .poweruser-view-tab {
+  margin-left: -1px;
+}
+.poweruser-view-tab:hover:not(.poweruser-view-tab--active) {
+  background: rgba(51, 65, 85, 0.55);
+  color: #cbd5e1;
+}
+.poweruser-view-tab--active {
+  background: #0f172a;
+  color: #e2e8f0;
+  z-index: 1;
+}
+.poweruser-view-panel {
+  background: #0f172a;
+  border: 1px solid #475569;
+  border-radius: 0 0.5rem 0.5rem 0.5rem;
+  padding: 0.75rem 0.75rem 0;
+}
+.poweruser-view-panel--byuser {
+  border-radius: 0 0.5rem 0.5rem 0.5rem;
+}
+.poweruser-view-panel--byitem {
+  border-radius: 0.5rem 0 0.5rem 0.5rem;
 }
 .poweruser-item-row {
   display: flex;

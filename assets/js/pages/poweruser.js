@@ -423,24 +423,6 @@
 
       var headerActions = document.createElement('div');
       headerActions.className = 'poweruser-bill-header-actions';
-      if (isExpanded) {
-        var viewMode = getViewModeForBill(dateStr);
-        var toggleBtn = document.createElement('button');
-        toggleBtn.type = 'button';
-        toggleBtn.className = 'poweruser-bill-toggle-view';
-        toggleBtn.textContent = 'View: ' + (viewMode === 'byItem' ? 'By Item' : 'By User');
-        toggleBtn.addEventListener('click', function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
-          var next = getViewModeForBill(d) === 'byItem' ? 'byUser' : 'byItem';
-          setViewModeForBill(d, next);
-          this.textContent = 'View: ' + (next === 'byItem' ? 'By Item' : 'By User');
-          var list = document.getElementById('poweruser-bills-list');
-          if (list && reviewState.billsData) renderBillsList(list, reviewState.billsData.bills);
-        });
-        headerActions.appendChild(toggleBtn);
-      }
 
       var hasNoClaims = bill.hasClaims === false;
       if (hasNoClaims || isInFlight) {
@@ -497,8 +479,61 @@
           var totalPaid = fullBill.totalPaid != null ? parseFloat(fullBill.totalPaid) : null;
           var tipAmount = (totalPaid != null && billTotal > 0 && totalPaid > billTotal)
             ? totalPaid - billTotal : 0;
+          var viewMode = getViewModeForBill(dateStr);
 
-          if (getViewModeForBill(dateStr) === 'byItem') {
+          var tabBar = document.createElement('div');
+          tabBar.className = 'poweruser-view-tab-bar';
+          tabBar.setAttribute('role', 'tablist');
+          tabBar.setAttribute('aria-label', 'Bill view');
+
+          var tabHeadings = document.createElement('div');
+          tabHeadings.className = 'poweruser-view-tab-headings';
+
+          var byUserTab = document.createElement('button');
+          byUserTab.type = 'button';
+          byUserTab.className = 'poweruser-view-tab' + (viewMode === 'byUser' ? ' poweruser-view-tab--active' : '');
+          byUserTab.setAttribute('role', 'tab');
+          byUserTab.setAttribute('aria-selected', viewMode === 'byUser' ? 'true' : 'false');
+          byUserTab.id = 'poweruser-view-tab-byuser-' + dateStr;
+          byUserTab.textContent = 'By User';
+          byUserTab.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
+            if (getViewModeForBill(d) === 'byUser') return;
+            setViewModeForBill(d, 'byUser');
+            var list = document.getElementById('poweruser-bills-list');
+            if (list && reviewState.billsData) renderBillsList(list, reviewState.billsData.bills);
+          });
+
+          var byItemTab = document.createElement('button');
+          byItemTab.type = 'button';
+          byItemTab.className = 'poweruser-view-tab' + (viewMode === 'byItem' ? ' poweruser-view-tab--active' : '');
+          byItemTab.setAttribute('role', 'tab');
+          byItemTab.setAttribute('aria-selected', viewMode === 'byItem' ? 'true' : 'false');
+          byItemTab.id = 'poweruser-view-tab-byitem-' + dateStr;
+          byItemTab.textContent = 'By Item';
+          byItemTab.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
+            if (getViewModeForBill(d) === 'byItem') return;
+            setViewModeForBill(d, 'byItem');
+            var list = document.getElementById('poweruser-bills-list');
+            if (list && reviewState.billsData) renderBillsList(list, reviewState.billsData.bills);
+          });
+
+          tabHeadings.appendChild(byUserTab);
+          tabHeadings.appendChild(byItemTab);
+          tabBar.appendChild(tabHeadings);
+          body.appendChild(tabBar);
+
+          var viewPanel = document.createElement('div');
+          viewPanel.className = 'poweruser-view-panel poweruser-view-panel--' + (viewMode === 'byUser' ? 'byuser' : 'byitem');
+          viewPanel.setAttribute('role', 'tabpanel');
+          viewPanel.setAttribute('aria-labelledby', viewMode === 'byUser' ? byUserTab.id : byItemTab.id);
+
+          if (viewMode === 'byItem') {
             var claimMap = typeof ClaimsState !== 'undefined' && ClaimsState.buildClaimMap
               ? ClaimsState.buildClaimMap(fullBill.claims) : {};
             var consolidated = buildConsolidatedItems(fullBill);
@@ -538,7 +573,7 @@
                 }
                 row.appendChild(claimantsWrap);
               }
-              body.appendChild(row);
+              viewPanel.appendChild(row);
             }
             var byItemSummary = document.createElement('div');
             byItemSummary.className = 'poweruser-bill-summary';
@@ -587,7 +622,7 @@
                 itemRow.appendChild(itemRight);
                 userBlock.appendChild(itemRow);
               }
-              body.appendChild(userBlock);
+              viewPanel.appendChild(userBlock);
             }
             var byUserSummary = document.createElement('div');
             byUserSummary.className = 'poweruser-bill-summary';
@@ -635,7 +670,8 @@
           summaryActionsWrap.className = 'poweruser-bill-summary-actions';
           summaryActionsWrap.appendChild(actionsWrap);
           summaryActionsWrap.appendChild(billSummaryEl);
-          body.appendChild(summaryActionsWrap);
+          viewPanel.appendChild(summaryActionsWrap);
+          body.appendChild(viewPanel);
         } else {
           body.innerHTML = '<p class="poweruser-loading">Loading…</p>';
           (function (d) {
