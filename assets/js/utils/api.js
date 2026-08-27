@@ -6,6 +6,17 @@
   var CONFIG = global.CONFIRMATIONAL_CONFIG || {};
   var BASE = CONFIG.API_URL || '';
 
+  function parseJsonResponse(res) {
+    return res.json().then(function (json) {
+      if (!res.ok) {
+        var msg = json && (json.error || json.message || json.msg);
+        throw new Error(msg || ('Request failed (' + res.status + ')'));
+      }
+      if (json && json.error) throw new Error(json.error);
+      return json.data;
+    });
+  }
+
   function get(action, params) {
     var url = new URL(BASE);
     url.searchParams.set('action', action);
@@ -15,26 +26,21 @@
         if (v !== undefined && v !== null) url.searchParams.set(k, v);
       });
     }
-    return fetch(url.toString())
-      .then(function (res) { return res.json(); })
-      .then(function (json) {
-        if (json.error) throw new Error(json.error);
-        return json.data;
-      });
+    return fetch(url.toString(), {
+      method: 'GET',
+      credentials: 'omit',
+      headers: { Accept: 'application/json' }
+    }).then(parseJsonResponse);
   }
 
   function post(action, body) {
     var payload = Object.assign({ action: action }, body);
     return fetch(BASE, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      credentials: 'omit',
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8', Accept: 'application/json' },
       body: JSON.stringify(payload)
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (json) {
-        if (json.error) throw new Error(json.error);
-        return json.data;
-      });
+    }).then(parseJsonResponse);
   }
 
   var api = {
@@ -52,7 +58,12 @@
     completeBillUpload: function (payload) { return post('completeBillUpload', payload); },
     updateBillTotalPaid: function (payload) { return post('updateBillTotalPaid', payload); },
     deleteBill: function (payload) { return post('deleteBill', payload); },
-    setBillOpen: function (payload) { return post('setBillOpen', payload); }
+    setBillOpen: function (payload) { return post('setBillOpen', payload); },
+    getFinancialOverview: function () { return get('getFinancialOverview'); },
+    getUserBalanceInfo: function () { return get('getUserBalanceInfo'); },
+    getAllTransactions: function () { return get('getAllTransactions'); },
+    getUserStatement: function (userName) { return get('getUserStatement', { userName: userName }); },
+    recordPayment: function (payload) { return post('recordPayment', payload); }
   };
 
   global.ClaimsAPI = api;

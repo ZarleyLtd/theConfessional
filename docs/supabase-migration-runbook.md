@@ -1,24 +1,22 @@
-# Supabase Migration Runbook
+# Supabase Deployment Runbook
 
 ## Prerequisites
 - Supabase project created.
 - Environment set from `.env.example`.
-- Legacy GAS endpoint still available for backfill (`LEGACY_API_URL`).
 
 ## Deployment Steps
-1. Apply SQL migrations in order:
+1. Apply SQL migrations in order (use `supabase db query --linked -f <file>` if `db push` history does not match):
    - `supabase/migrations/20260425223000_theconfessional_schema.sql`
    - `supabase/migrations/20260425223100_theconfessional_bucket.sql`
+   - `supabase/migrations/20260425223200_payments.sql`
+   - `supabase/migrations/20260425223300_opening_balances.sql`
 2. Set function secrets (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`, `GEMINI_API_KEY`).
 3. Deploy function:
    - `supabase functions deploy theconfessional-api --no-verify-jwt`
 4. Update frontend endpoint in `assets/js/config/sheets-config.js`.
 
-## Data Migration
-1. Backfill data and images from Google backend:
-   - `node scripts/migrate-google-to-supabase.mjs`
-2. Optional local image backfill:
-   - `node scripts/migrate-local-images-to-supabase.mjs <directory>`
+## Optional image backfill
+- `node scripts/migrate-local-images-to-supabase.mjs <directory>` for exported local bill images.
 
 ## Smoke Test Checklist
 - `GET action=dates` returns only non-inflight bills.
@@ -31,13 +29,9 @@
   - `updateBillTotalPaid` + `setBillOpen` finalizes.
 - `deleteBill` rejects dates with existing claims.
 
-## Rollback
-1. Revert `assets/js/config/sheets-config.js` `API_URL` to old GAS endpoint.
-2. Keep Supabase data untouched for retry.
-3. Investigate edge function logs and rerun migration scripts idempotently.
-
-## Google Decommission (after validation window)
-1. Freeze writes to old GAS endpoint.
-2. Take final migration pass.
-3. Disable/undeploy GAS web app.
-4. Archive Sheets + Drive artifacts.
+## Troubleshooting
+1. Redeploy the edge function after backend changes.
+2. Confirm migrations were applied and schema `theConfessional` is exposed.
+3. Confirm bucket `theConfessional` exists and is private.
+4. Ensure `SUPABASE_DB_URL` points at direct Postgres (`db.<ref>.supabase.co:5432`).
+5. Check edge function logs in the Supabase dashboard if requests fail.

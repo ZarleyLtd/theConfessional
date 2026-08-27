@@ -612,6 +612,762 @@ async function submitClaims(sb: ReturnType<typeof createClient>, body: Record<st
   return { ok: true, count: claims.length, claims: updatedClaims };
 }
 
+type FinBillItem = {
+  rowIndex: number;
+  category: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+};
+
+type FinClaim = {
+  userName: string;
+  rowIndex: number;
+  unitIndex: number;
+};
+
+type FinBill = {
+  date: string;
+  totalPaid: number | null;
+  items: FinBillItem[];
+  claims: FinClaim[];
+};
+
+type FinPayment = {
+  paymentDate: string;
+  userName: string;
+  amount: number;
+};
+
+type CategoryCol = { items: string; amount: number };
+
+type UserBillSnapshot = {
+  food: CategoryCol;
+  extras: CategoryCol;
+  drinks: CategoryCol;
+  total: number;
+  dueWithTip: number;
+  carryForward: number;
+  paid: number;
+  owed: number;
+};
+
+function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function exportCategory(cat: string): "food" | "fries" | "drinks" {
+  const c = (cat || "").toLowerCase();
+  if (c.includes("food")) return "food";
+  if (c.includes("fries")) return "fries";
+  return "drinks";
+}
+
+/** e.g. count=4, "Pt Coors" -> "4 Pt Coors" */
+function formatDrinkLabel(count: number, description: string): string {
+  const name = String(description || "").trim();
+  return count + " " + name;
+}
+
+function resolveCanonicalName(name: string, configNames: string[]): string {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return trimmed;
+  const norm = normalizeUserName(trimmed);
+  for (const n of configNames) {
+    if (normalizeUserName(n) === norm) return n;
+  }
+  return trimmed;
+}
+
+function analyzeBillForFinancial(bill: FinBill) {
+  const claimMap: Record<string, string> = {};
+  for (const c of bill.claims) {
+    claimMap[`${c.rowIndex}_${c.unitIndex}`] = c.userName;
+  }
+  const byUser: Record<string, {
+    food: { descs: string[]; amount: number };
+    fries: { descs: string[]; amount: number };
+    drinks: Record<string, { count: number; unitPrice: number }>;
+    total: number;
+  }> = {};
+
+  for (const item of bill.items) {
+    const qty = Number(item.quantity) || 0;
+    const unitPrice = Number(item.unit_price) || 0;
+    const exportCat = exportCategory(item.category);
+    for (let u = 0; u < qty; u++) {
+      const name = (claimMap[`${item.rowIndex}_${u}`] || "").trim();
+      if (!name) continue;
+      if (!byUser[name]) {
+        byUser[name] = {
+          food: { descs: [], amount: 0 },
+          fries: { descs: [], amount: 0 },
+          drinks: {},
+          total: 0,
+        };
+      }
+      byUser[name].total = roundMoney(byUser[name].total + unitPrice);
+      if (exportCat === "food") {
+        byUser[name].food.descs.push(item.description);
+        byUser[name].food.amount = roundMoney(byUser[name].food.amount + unitPrice);
+      } else if (exportCat === "fries") {
+        byUser[name].fries.descs.push(item.description);
+        byUser[name].fries.amount = roundMoney(byUser[name].fries.amount + unitPrice);
+      } else {
+        const key = item.description;
+        if (!byUser[name].drinks[key]) {
+          byUser[name].drinks[key] = { count: 0, unitPrice };
+        }
+        byUser[name].drinks[key].count++;
+      }
+    }
+  }
+
+  const billTotal = bill.items.reduce(
+    (s, it) => s + (Number(it.total_price) || 0),
+    0,
+  );
+  const totalPaid = bill.totalPaid != null ? Number(bill.totalPaid) : null;
+  const tipAmount = (totalPaid != null && billTotal > 0 && totalPaid > billTotal)
+    ? roundMoney(totalPaid - billTotal)
+    : 0;
+
+  const userRows: Record<string, {
+    food: CategoryCol;
+    extras: CategoryCol;
+    drinks: CategoryCol;
+    total: number;
+    dueWithTip: number;
+  }> = {};
+
+  for (const userName of Object.keys(byUser)) {
+    const data = byUser[userName];
+    const drinkKeys = Object.keys(data.drinks);
+    const drinkLabels: string[] = [];
+    let drinkAmount = 0;
+    for (const dk of drinkKeys) {
+      const d = data.drinks[dk];
+      drinkLabels.push(formatDrinkLabel(d.count, dk));
+      drinkAmount = roundMoney(drinkAmount + d.unitPrice * d.count);
+    }
+    const userTotal = data.total;
+    const share = billTotal > 0 ? userTotal / billTotal : 0;
+    userRows[userName] = {
+      food: { items: data.food.descs.join(", "), amount: data.food.amount },
+      extras: { items: data.fries.descs.join(", "), amount: data.fries.amount },
+      drinks: { items: drinkLabels.join(", "), amount: drinkAmount },
+      total: userTotal,
+      dueWithTip: roundMoney(userTotal + tipAmount * share),
+    };
+  }
+
+  return { billTotal, tipAmount, totalPaid, userRows };
+}
+
+const FINANCIAL_GUEST_JOHN = "John";
+
+function findJohnBillShare(
+  analysis: ReturnType<typeof analyzeBillForFinancial>,
+) {
+  let share = analysis.userRows[FINANCIAL_GUEST_JOHN];
+  if (!share) {
+    for (const rawName of Object.keys(analysis.userRows)) {
+      if (normalizeUserName(rawName) === normalizeUserName(FINANCIAL_GUEST_JOHN)) {
+        share = analysis.userRows[rawName];
+        break;
+      }
+    }
+  }
+  if (!share || share.total <= 0) return null;
+  return share;
+}
+
+type OpeningBalanceUser = {
+  userName: string;
+  balance: number;
+  displayOrder: number;
+};
+
+type OpeningBalancesConfig = {
+  asOfDate: string;
+  billStartDate: string;
+  users: OpeningBalanceUser[];
+};
+
+function resolveFinancialName(
+  name: string,
+  financialNames: string[],
+): string | null {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return null;
+  const norm = normalizeUserName(trimmed);
+  for (const n of financialNames) {
+    if (normalizeUserName(n) === norm) return n;
+  }
+  return null;
+}
+
+function billStartDateFromAsOf(asOfDate: string): string {
+  const d = new Date(asOfDate + "T12:00:00");
+  d.setDate(d.getDate() + 1);
+  return formatDate(d) as string;
+}
+
+function buildFinancialLedger(
+  bills: FinBill[],
+  payments: FinPayment[],
+  opening: OpeningBalancesConfig,
+) {
+  const financialNames = opening.users
+    .slice()
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+    .map((u) => u.userName);
+
+  const nameSet: Record<string, boolean> = {};
+  const balances: Record<string, number> = {};
+  for (const u of opening.users) {
+    nameSet[u.userName] = true;
+    balances[u.userName] = roundMoney(u.balance);
+  }
+
+  const settled = bills
+    .filter((b) =>
+      b.totalPaid != null && b.date.localeCompare(opening.billStartDate) >= 0
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const billSnapshots: Record<string, Record<string, UserBillSnapshot>> = {};
+  const billsByDate: Record<string, FinBill> = {};
+  for (const b of settled) billsByDate[b.date] = b;
+
+  const paymentsByDate: Record<string, FinPayment[]> = {};
+  for (const p of payments) {
+    const canon = resolveFinancialName(p.userName, financialNames);
+    if (!canon) continue;
+    if (!paymentsByDate[p.paymentDate]) paymentsByDate[p.paymentDate] = [];
+    paymentsByDate[p.paymentDate].push({ ...p, userName: canon });
+  }
+
+  const dateSet = new Set<string>();
+  for (const b of settled) dateSet.add(b.date);
+  for (const p of payments) {
+    if (resolveFinancialName(p.userName, financialNames)) {
+      dateSet.add(p.paymentDate);
+    }
+  }
+  const dates = Array.from(dateSet).sort();
+
+  const userLatestBillDue: Record<string, { date: string; due: number }> = {};
+  const orderedNames = financialNames;
+
+  for (const date of dates) {
+    const bill = billsByDate[date];
+    if (bill) {
+      const analysis = analyzeBillForFinancial(bill);
+      billSnapshots[bill.date] = {};
+
+      for (const userName of orderedNames) {
+        let share = analysis.userRows[userName];
+        if (!share) {
+          for (const rawName of Object.keys(analysis.userRows)) {
+            if (resolveFinancialName(rawName, financialNames) === userName) {
+              share = analysis.userRows[rawName];
+              break;
+            }
+          }
+        }
+        const cf = roundMoney(balances[userName] || 0);
+        const due = share ? share.dueWithTip : 0;
+        if (due > 0) {
+          userLatestBillDue[userName] = { date: bill.date, due };
+        }
+        balances[userName] = roundMoney(cf + due);
+        billSnapshots[bill.date][userName] = {
+          food: share ? share.food : { items: "", amount: 0 },
+          extras: share ? share.extras : { items: "", amount: 0 },
+          drinks: share ? share.drinks : { items: "", amount: 0 },
+          total: share ? share.total : 0,
+          dueWithTip: due,
+          carryForward: cf,
+          paid: 0,
+          owed: 0,
+        };
+      }
+    }
+
+    const dayPayments = paymentsByDate[date] || [];
+    for (const p of dayPayments) {
+      const name = p.userName;
+      balances[name] = roundMoney((balances[name] || 0) - p.amount);
+      if (bill && billSnapshots[bill.date] && billSnapshots[bill.date][name]) {
+        billSnapshots[bill.date][name].paid = roundMoney(
+          billSnapshots[bill.date][name].paid + p.amount,
+        );
+      }
+    }
+
+    if (bill && billSnapshots[bill.date]) {
+      for (const userName of orderedNames) {
+        billSnapshots[bill.date][userName].owed = roundMoney(
+          balances[userName] || 0,
+        );
+      }
+    }
+  }
+
+  const latestBill = settled.length ? settled[settled.length - 1] : null;
+  return {
+    balances,
+    orderedNames,
+    billSnapshots,
+    latestBill,
+    userLatestBillDue,
+    opening,
+  };
+}
+
+async function loadFinancialBills(sb: ReturnType<typeof createClient>): Promise<FinBill[]> {
+  const full = await getAllBillsFull(sb);
+  const { data: metaData, error: metaErr } = await sb.from("bills").select(
+    "bill_date, total_paid",
+  );
+  if (metaErr) throw new Error(metaErr.message);
+  const paidByDate: Record<string, number | null> = {};
+  for (const row of metaData || []) {
+    const d = formatDate((row as { bill_date: string }).bill_date);
+    if (!d) continue;
+    const tp = (row as { total_paid: number | null }).total_paid;
+    paidByDate[d] = tp != null ? Number(tp) : null;
+  }
+  return (full.bills || []).map((b: Record<string, unknown>) => ({
+    date: String(b.date),
+    totalPaid: paidByDate[String(b.date)] ?? null,
+    items: (b.items as FinBillItem[]) || [],
+    claims: ((b.claims as Array<Record<string, unknown>>) || []).map((c) => ({
+      userName: String(c.userName || ""),
+      rowIndex: Number(c.rowIndex) || 0,
+      unitIndex: Number(c.unitIndex) || 0,
+    })),
+  }));
+}
+
+async function loadOpeningBalances(
+  sb: ReturnType<typeof createClient>,
+): Promise<OpeningBalancesConfig> {
+  const { data, error } = await sb.from("opening_balances").select(
+    "user_name, as_of_date, balance, display_order",
+  ).order("display_order", { ascending: true });
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    throw new Error("Opening balances not configured");
+  }
+  const asOfDate = formatDate(
+    (data[0] as { as_of_date: string }).as_of_date,
+  ) as string;
+  return {
+    asOfDate,
+    billStartDate: billStartDateFromAsOf(asOfDate),
+    users: (data as Array<{
+      user_name: string;
+      balance: number;
+      display_order: number;
+    }>).map((r) => ({
+      userName: String(r.user_name || "").trim(),
+      balance: roundMoney(Number(r.balance) || 0),
+      displayOrder: Number(r.display_order) || 0,
+    })),
+  };
+}
+
+async function loadPayments(sb: ReturnType<typeof createClient>): Promise<FinPayment[]> {
+  const { data, error } = await sb.from("payments").select(
+    "payment_date, user_name, amount",
+  ).order("payment_date", { ascending: true }).order("id", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data || []).map((r: { payment_date: string; user_name: string; amount: number }) => ({
+    paymentDate: formatDate(r.payment_date) as string,
+    userName: String(r.user_name || "").trim(),
+    amount: roundMoney(Number(r.amount) || 0),
+  })).filter((p: FinPayment) => !!p.paymentDate && p.userName && p.amount > 0);
+}
+
+async function getFinancialOverview(sb: ReturnType<typeof createClient>) {
+  const [bills, payments, opening] = await Promise.all([
+    loadFinancialBills(sb),
+    loadPayments(sb),
+    loadOpeningBalances(sb),
+  ]);
+  const ledger = buildFinancialLedger(bills, payments, opening);
+  const latestBill = ledger.latestBill;
+  if (!latestBill) {
+    return {
+      billDate: null,
+      openingAsOf: opening.asOfDate,
+      rows: opening.users
+        .slice()
+        .sort((a, b) => a.displayOrder - b.displayOrder)
+        .map((u) => ({
+          userName: u.userName,
+          food: { items: "", amount: 0 },
+          extras: { items: "", amount: 0 },
+          drinks: { items: "", amount: 0 },
+          total: 0,
+          dueWithTip: 0,
+          carryForward: u.balance,
+          paid: 0,
+          owed: u.balance,
+        })),
+      footer: null,
+      balances: ledger.orderedNames.map((n) => ({
+        userName: n,
+        balance: roundMoney(ledger.balances[n] || 0),
+      })),
+    };
+  }
+
+  const analysis = analyzeBillForFinancial(latestBill);
+  const snapshots = ledger.billSnapshots[latestBill.date] || {};
+  const rows = ledger.orderedNames.map((userName) => {
+    const snap = snapshots[userName] || {
+      food: { items: "", amount: 0 },
+      extras: { items: "", amount: 0 },
+      drinks: { items: "", amount: 0 },
+      total: 0,
+      dueWithTip: 0,
+      carryForward: roundMoney(ledger.balances[userName] || 0),
+      paid: 0,
+      owed: roundMoney(ledger.balances[userName] || 0),
+    };
+    return {
+      userName,
+      food: snap.food,
+      extras: snap.extras,
+      drinks: snap.drinks,
+      total: snap.total,
+      dueWithTip: snap.dueWithTip,
+      carryForward: snap.carryForward,
+      paid: snap.paid,
+      owed: snap.owed,
+    };
+  });
+
+  const johnShare = findJohnBillShare(analysis);
+  if (johnShare) {
+    rows.unshift({
+      userName: FINANCIAL_GUEST_JOHN,
+      food: johnShare.food,
+      extras: johnShare.extras,
+      drinks: johnShare.drinks,
+      total: johnShare.total,
+      dueWithTip: johnShare.dueWithTip,
+      carryForward: null,
+      paid: null,
+      owed: null,
+      guestRow: true,
+    });
+  }
+
+  let footerFood = 0;
+  let footerExtras = 0;
+  let footerDrinks = 0;
+  let footerCf = 0;
+  let footerPaid = 0;
+  let footerOwed = 0;
+  let footerDue = 0;
+  for (const row of rows) {
+    footerFood = roundMoney(footerFood + row.food.amount);
+    footerExtras = roundMoney(footerExtras + row.extras.amount);
+    footerDrinks = roundMoney(footerDrinks + row.drinks.amount);
+    if (row.carryForward != null) {
+      footerCf = roundMoney(footerCf + row.carryForward);
+    }
+    if (row.paid != null) {
+      footerPaid = roundMoney(footerPaid + row.paid);
+    }
+    if (row.owed != null) {
+      footerOwed = roundMoney(footerOwed + row.owed);
+    }
+    footerDue = roundMoney(footerDue + row.dueWithTip);
+  }
+
+  const tipRate = analysis.billTotal > 0
+    ? roundMoney((analysis.tipAmount / analysis.billTotal) * 100) / 100
+    : 0;
+
+  return {
+    billDate: latestBill.date,
+    rows,
+    footer: {
+      foodTotal: footerFood,
+      extrasTotal: footerExtras,
+      drinksTotal: footerDrinks,
+      billTotal: analysis.billTotal,
+      totalDueWithTip: footerDue,
+      carryForwardTotal: footerCf,
+      paidTotal: footerPaid,
+      owedTotal: footerOwed,
+      paidByJP: analysis.totalPaid,
+      tipRate,
+      tipAmount: analysis.tipAmount,
+    },
+    balances: ledger.orderedNames.map((n) => ({
+      userName: n,
+      balance: roundMoney(ledger.balances[n] || 0),
+    })),
+  };
+}
+
+async function getUserBalanceInfo(sb: ReturnType<typeof createClient>) {
+  const [bills, payments, opening] = await Promise.all([
+    loadFinancialBills(sb),
+    loadPayments(sb),
+    loadOpeningBalances(sb),
+  ]);
+  const ledger = buildFinancialLedger(bills, payments, opening);
+  return {
+    users: ledger.orderedNames.map((userName) => ({
+      userName,
+      balance: roundMoney(ledger.balances[userName] || 0),
+      latestBillDue: ledger.userLatestBillDue[userName]
+        ? ledger.userLatestBillDue[userName].due
+        : 0,
+      latestBillDate: ledger.userLatestBillDue[userName]
+        ? ledger.userLatestBillDue[userName].date
+        : null,
+    })),
+  };
+}
+
+async function getUserStatement(
+  sb: ReturnType<typeof createClient>,
+  userName: string,
+) {
+  const rawName = String(userName || "").trim();
+  if (!rawName) throw new Error("Missing userName");
+  const [bills, payments, opening] = await Promise.all([
+    loadFinancialBills(sb),
+    loadPayments(sb),
+    loadOpeningBalances(sb),
+  ]);
+  const financialNames = opening.users.map((u) => u.userName);
+  const canon = resolveFinancialName(rawName, financialNames);
+  if (!canon) {
+    throw new Error("No financial account for this name");
+  }
+  const ledger = buildFinancialLedger(bills, payments, opening);
+  const settled = bills
+    .filter((b) =>
+      b.totalPaid != null && b.date.localeCompare(opening.billStartDate) >= 0
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const openingUser = opening.users.find((u) => u.userName === canon);
+  const openingBalance = openingUser ? openingUser.balance : 0;
+
+  const paymentsByDate: Record<string, FinPayment[]> = {};
+  for (const p of payments) {
+    const pCanon = resolveFinancialName(p.userName, financialNames);
+    if (pCanon !== canon) continue;
+    if (!paymentsByDate[p.paymentDate]) paymentsByDate[p.paymentDate] = [];
+    paymentsByDate[p.paymentDate].push(p);
+  }
+
+  const events: Array<{
+    date: string;
+    type: "opening" | "bill" | "payment";
+    description: string;
+    amount: number | null;
+    billDate: string | null;
+    balanceAfter: number;
+  }> = [];
+
+  const dateSet = new Set<string>();
+  for (const b of settled) dateSet.add(b.date);
+  for (const p of payments) {
+    if (resolveFinancialName(p.userName, financialNames) === canon) {
+      dateSet.add(p.paymentDate);
+    }
+  }
+  const dates = Array.from(dateSet).sort();
+
+  let balance = roundMoney(openingBalance);
+  for (const date of dates) {
+    const bill = settled.find((b) => b.date === date);
+    if (bill) {
+      const analysis = analyzeBillForFinancial(bill);
+      const share = analysis.userRows[canon] ||
+        Object.entries(analysis.userRows).find(([n]) =>
+          resolveFinancialName(n, financialNames) === canon
+        )?.[1];
+      const due = share ? share.dueWithTip : 0;
+      if (due > 0) {
+        balance = roundMoney(balance + due);
+        events.push({
+          date,
+          type: "bill",
+          description: "Bill",
+          amount: due,
+          billDate: date,
+          balanceAfter: balance,
+        });
+      }
+    }
+    const dayPayments = paymentsByDate[date] || [];
+    for (const p of dayPayments) {
+      balance = roundMoney(balance - p.amount);
+      events.push({
+        date,
+        type: "payment",
+        description: "Payment",
+        amount: -p.amount,
+        billDate: null,
+        balanceAfter: balance,
+      });
+    }
+  }
+
+  events.push({
+    date: opening.asOfDate,
+    type: "opening",
+    description: "Opening balance",
+    amount: null,
+    billDate: null,
+    balanceAfter: roundMoney(openingBalance),
+  });
+
+  events.reverse();
+  return {
+    userName: canon,
+    currentBalance: roundMoney(ledger.balances[canon] || 0),
+    openingAsOf: opening.asOfDate,
+    transactions: events,
+  };
+}
+
+async function getAllTransactions(sb: ReturnType<typeof createClient>) {
+  const [bills, payments, opening] = await Promise.all([
+    loadFinancialBills(sb),
+    loadPayments(sb),
+    loadOpeningBalances(sb),
+  ]);
+  const financialNames = opening.users.map((u) => u.userName);
+
+  const orderIndex: Record<string, number> = {};
+  for (const u of opening.users) {
+    orderIndex[u.userName] = u.displayOrder;
+  }
+
+  const transactions: Array<{
+    date: string;
+    type: "opening" | "bill" | "payment";
+    description: string;
+    amount: number;
+    billDate: string | null;
+    userName: string | null;
+  }> = [];
+
+  for (const u of opening.users) {
+    transactions.push({
+      date: opening.asOfDate,
+      type: "opening",
+      description: u.userName + " - Opening balance",
+      amount: roundMoney(u.balance),
+      billDate: null,
+      userName: u.userName,
+    });
+  }
+
+  const settled = bills
+    .filter((b) =>
+      b.totalPaid != null && b.date.localeCompare(opening.billStartDate) >= 0
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  for (const bill of settled) {
+    const analysis = analyzeBillForFinancial(bill);
+    for (const userName of financialNames) {
+      let share = analysis.userRows[userName];
+      if (!share) {
+        for (const rawName of Object.keys(analysis.userRows)) {
+          if (resolveFinancialName(rawName, financialNames) === userName) {
+            share = analysis.userRows[rawName];
+            break;
+          }
+        }
+      }
+      const due = share ? share.dueWithTip : 0;
+      if (due <= 0) continue;
+      transactions.push({
+        date: bill.date,
+        type: "bill",
+        description: userName + " - Bill",
+        amount: roundMoney(due),
+        billDate: bill.date,
+        userName,
+      });
+    }
+  }
+
+  for (const p of payments) {
+    const canon = resolveFinancialName(p.userName, financialNames);
+    if (!canon) continue;
+    transactions.push({
+      date: p.paymentDate,
+      type: "payment",
+      description: canon + " - Payment",
+      amount: roundMoney(p.amount),
+      billDate: null,
+      userName: canon,
+    });
+  }
+
+  const typeOrder: Record<string, number> = {
+    payment: 0,
+    bill: 1,
+    opening: 2,
+  };
+
+  transactions.sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    const ta = typeOrder[a.type] ?? 9;
+    const tb = typeOrder[b.type] ?? 9;
+    if (ta !== tb) return ta - tb;
+    const ao = orderIndex[a.userName || ""] || 0;
+    const bo = orderIndex[b.userName || ""] || 0;
+    return ao - bo;
+  });
+
+  return { transactions };
+}
+
+async function recordPayment(
+  sb: ReturnType<typeof createClient>,
+  body: Record<string, unknown>,
+) {
+  const paymentDate = formatDate(body.paymentDate);
+  const userName = String(body.userName || "").trim();
+  const amount = Number(body.amount);
+  if (!paymentDate || !userName) throw new Error("Missing paymentDate or userName");
+  if (isNaN(amount) || amount <= 0) throw new Error("Invalid amount");
+  const opening = await loadOpeningBalances(sb);
+  const financialNames = opening.users.map((u) => u.userName);
+  const canon = resolveFinancialName(userName, financialNames);
+  if (!canon) throw new Error("No financial account for this name");
+  const { error } = await sb.from("payments").insert({
+    payment_date: paymentDate,
+    user_name: canon,
+    amount: roundMoney(amount),
+  });
+  if (error) throw new Error(error.message);
+  return {
+    ok: true,
+    paymentDate,
+    userName: canon,
+    amount: roundMoney(amount),
+  };
+}
+
 async function doGet(sb: ReturnType<typeof createClient>, url: URL) {
   const action = url.searchParams.get("action") || "";
   const out: { error: string | null; data: unknown } = { error: null, data: null };
@@ -625,7 +1381,12 @@ async function doGet(sb: ReturnType<typeof createClient>, url: URL) {
     else if (action === "getAllBillsFull") out.data = await getAllBillsFull(sb);
     else if (action === "getBillsSummary") out.data = await getBillsSummary(sb);
     else if (action === "getBillFull") out.data = await getBillFull(sb, url.searchParams.get("date") || "");
-    else throw new Error("Unknown or missing action");
+    else if (action === "getFinancialOverview") out.data = await getFinancialOverview(sb);
+    else if (action === "getUserBalanceInfo") out.data = await getUserBalanceInfo(sb);
+    else if (action === "getAllTransactions") out.data = await getAllTransactions(sb);
+    else if (action === "getUserStatement") {
+      out.data = await getUserStatement(sb, url.searchParams.get("userName") || "");
+    } else throw new Error("Unknown or missing action");
   } catch (err) {
     out.error = err instanceof Error ? err.message : String(err);
   }
@@ -649,6 +1410,7 @@ async function doPost(sb: ReturnType<typeof createClient>, req: Request) {
     else if (action === "updateBillTotalPaid") out.data = await updateBillTotalPaid(sb, body);
     else if (action === "deleteBill") out.data = await deleteBill(sb, body);
     else if (action === "setBillOpen") out.data = await setBillOpen(sb, body);
+    else if (action === "recordPayment") out.data = await recordPayment(sb, body);
     else throw new Error("Unknown or missing action");
   } catch (err) {
     out.error = err instanceof Error ? err.message : String(err);

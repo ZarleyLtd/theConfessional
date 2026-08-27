@@ -24,15 +24,14 @@ Deploy edge function:
 
 - `supabase functions deploy theconfessional-api --no-verify-jwt`
 
-Optional migration from legacy Google backend:
-- `node scripts/migrate-google-to-supabase.mjs` (uses `LEGACY_API_URL`)
-- `node scripts/migrate-local-images-to-supabase.mjs <folder>` for exported local images.
+Optional local image backfill:
+- `node scripts/migrate-local-images-to-supabase.mjs <folder>` for exported bill images.
 
 ### 2. Frontend
 
 1. Open `assets/js/config/sheets-config.js` and set `API_URL` to your function URL:
    `https://<project-ref>.supabase.co/functions/v1/theconfessional-api`
-2. Serve the project (e.g. deploy to GitHub Pages or any static host). For local testing, use a simple HTTP server (e.g. `npx serve .`) so the Google Apps Script backend is not blocked by CORS. No build step is required.
+2. Serve the project (e.g. deploy to GitHub Pages or any static host). For local testing, use a simple HTTP server (e.g. `npx serve .`). No build step is required.
 
 ## Usage
 
@@ -65,5 +64,5 @@ Optional migration from legacy Google backend:
 - `assets/js/main.js` – Entry point.
 - `supabase/functions/theconfessional-api/index.ts` – Supabase Edge Function backend.
 - `supabase/migrations/` – schema + bucket migrations.
-- `scripts/` – one-time migration scripts.
+- `scripts/` – optional local image migration script.
 

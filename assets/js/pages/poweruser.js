@@ -6,8 +6,9 @@
 (function (global) {
   var rootEl;
   var reviewState = { billsData: null, viewModeByDate: {}, expandedDate: null, billCache: {}, billFetchPromises: {}, billImageCache: {} };
+  var pageState = { section: 'bills', paymentSelectedUser: null, paymentBalanceInfo: null };
 
-  /** ++ button: must match `GEMINI_BILL_ALLOWED_MODELS` in backend `code.gs`. */
+  /** ++ button: must match `GEMINI_BILL_ALLOWED_MODELS` in the edge function. */
   var ALT_GEMINI_MODEL_CHOICES = [
     { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite' },
     { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
@@ -16,7 +17,7 @@
     { id: 'gemma-3-27b-it', label: 'Gemma 2 27B' }
   ];
 
-  /** Display name for the (+) path; must match `GEMINI_BILL_DEFAULT_MODEL` in `code.gs`. */
+  /** Display name for the (+) path; must match `GEMINI_BILL_DEFAULT_MODEL` in the edge function. */
   var DEFAULT_BILL_MODEL_LABEL = 'Gemini 3 Flash';
 
   function getViewModeForBill(dateStr) {
@@ -78,14 +79,29 @@
     html += '</div>';
     html += '</div>';
     html += '<div class="poweruser-content">';
+    html += '<nav class="poweruser-nav" aria-label="God Mode sections">';
+    html += '<button type="button" class="poweruser-nav__btn poweruser-nav__btn--active" data-section="bills">Bills</button>';
+    html += '<button type="button" class="poweruser-nav__btn" data-section="transactions">Transactions</button>';
+    html += '<button type="button" class="poweruser-nav__btn" data-section="financial">Financial</button>';
+    html += '<button type="button" class="poweruser-nav__btn" data-section="payment">Record Payment</button>';
+    html += '</nav>';
     html += '<div class="poweruser-main-wrap">';
-    html += '<section id="poweruser-review" class="poweruser-section poweruser-section--active">';
+    html += '<section id="poweruser-review" class="poweruser-section poweruser-section--active" data-section="bills">';
     html += '<div class="poweruser-add-bar">' +
       '<button type="button" class="poweruser-add-bill" id="poweruser-add-bill" title="Upload new bill" aria-label="Upload new bill">+</button>' +
       '<button type="button" class="poweruser-add-bill poweruser-add-bill--narrow" id="poweruser-add-bill-alt" title="Upload with alternate Gemini model" aria-label="Upload with alternate AI model">++</button>' +
       '</div>';
     html += '<div id="poweruser-upload-inline" class="poweruser-upload-inline"></div>';
     html += '<div id="poweruser-review-list"></div>';
+    html += '</section>';
+    html += '<section id="poweruser-transactions" class="poweruser-section" data-section="transactions">';
+    html += '<div id="poweruser-transactions-mount"></div>';
+    html += '</section>';
+    html += '<section id="poweruser-financial" class="poweruser-section" data-section="financial">';
+    html += '<div id="poweruser-financial-mount"></div>';
+    html += '</section>';
+    html += '<section id="poweruser-payment" class="poweruser-section" data-section="payment">';
+    html += '<div id="poweruser-payment-mount"></div>';
     html += '</section>';
     html += '</div>';
     html += '</div></div>';
@@ -116,6 +132,388 @@
     }
 
     renderBillReview();
+
+    var navBtns = rootEl.querySelectorAll('.poweruser-nav__btn');
+    for (var ni = 0; ni < navBtns.length; ni++) {
+      navBtns[ni].addEventListener('click', function () {
+        var section = this.getAttribute('data-section');
+        switchSection(section);
+      });
+    }
+  }
+
+  function switchSection(section) {
+    pageState.section = section || 'bills';
+    var navBtns = rootEl.querySelectorAll('.poweruser-nav__btn');
+    for (var i = 0; i < navBtns.length; i++) {
+      var btn = navBtns[i];
+      btn.classList.toggle('poweruser-nav__btn--active', btn.getAttribute('data-section') === pageState.section);
+    }
+    var sections = rootEl.querySelectorAll('.poweruser-section');
+    for (var s = 0; s < sections.length; s++) {
+      var sec = sections[s];
+      sec.classList.toggle('poweruser-section--active', sec.getAttribute('data-section') === pageState.section);
+    }
+    if (pageState.section === 'transactions') renderTransactions();
+    else if (pageState.section === 'financial') renderFinancialOverview();
+    else if (pageState.section === 'payment') renderRecordPayment();
+  }
+
+  function renderTransactions() {
+    var mount = document.getElementById('poweruser-transactions-mount');
+    if (!mount) return;
+    mount.innerHTML = '<p class="poweruser-loading">Loading transactions…</p>';
+    if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getAllTransactions) {
+      mount.innerHTML = '<p class="poweruser-error">Transactions API not available.</p>';
+      return;
+    }
+    ClaimsAPI.getAllTransactions()
+      .then(function (data) {
+        var txns = (data && data.transactions) ? data.transactions : [];
+        if (txns.length === 0) {
+          mount.innerHTML = '<p class="poweruser-placeholder">No bills or payments yet.</p>';
+          return;
+        }
+        var html = '<div class="poweruser-transactions">';
+        html += '<h2 class="poweruser-transactions__title">All transactions</h2>';
+        html += '<ul class="poweruser-transactions-list">';
+        var prevDate = null;
+        for (var i = 0; i < txns.length; i++) {
+          var t = txns[i];
+          var showDate = t.date !== prevDate;
+          prevDate = t.date;
+          var dateLabel = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
+            ? ClaimsFormatters.formatBillDateDisplay(t.date) : t.date;
+          var isBill = t.type === 'bill';
+          var isOpening = t.type === 'opening';
+          var amountClass = isBill
+            ? 'poweruser-transactions-list__amount--bill'
+            : (isOpening ? 'poweruser-transactions-list__amount--opening' : 'poweruser-transactions-list__amount--payment');
+          var desc = t.description || '';
+          var itemClass = 'poweruser-transactions-list__item';
+          if (isBill) itemClass += ' poweruser-transactions-list__item--bill';
+          else if (!isOpening) itemClass += ' poweruser-transactions-list__item--payment';
+          html += '<li class="' + itemClass + '">';
+          html += '<div class="poweruser-transactions-list__main">';
+          if (showDate) {
+            html += '<span class="poweruser-transactions-list__date">' + escapeHtml(dateLabel) + '</span>';
+          } else {
+            html += '<span class="poweruser-transactions-list__date poweruser-transactions-list__date--repeat"></span>';
+          }
+          html += '<span class="poweruser-transactions-list__desc">' + escapeHtml(desc) + '</span>';
+          html += '<span class="poweruser-transactions-list__amount ' + amountClass + '">' + formatMoney(t.amount) + '</span>';
+          html += '</div>';
+          html += '</li>';
+        }
+        html += '</ul></div>';
+        mount.innerHTML = html;
+      })
+      .catch(function (err) {
+        mount.innerHTML = '<p class="poweruser-error">' + escapeHtml(err.message || 'Failed to load transactions') + '</p>';
+      });
+  }
+
+  function formatMoney(val) {
+    if (val == null || isNaN(val)) return '—';
+    var n = parseFloat(val);
+    var prefix = n < 0 ? '-€' : '€';
+    return prefix + Math.abs(n).toFixed(2);
+  }
+
+  function todayIsoDate() {
+    var d = new Date();
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function formatMoneyOptional(val) {
+    if (val == null || val === '') return '';
+    return formatMoney(val);
+  }
+
+  function shareFinancialOverviewImage(btn, billDate) {
+    if (typeof html2canvas !== 'function') {
+      alert('Image capture is not available. Check your network connection and reload.');
+      return;
+    }
+    var overview = document.querySelector('.financial-overview');
+    if (!overview || !btn) return;
+
+    var shareBtn = btn;
+    var tableWrap = overview.querySelector('.financial-table-wrap');
+    var label = shareBtn.textContent;
+    shareBtn.disabled = true;
+    shareBtn.textContent = 'Creating image…';
+
+    var prevWrapOverflow = tableWrap ? tableWrap.style.overflow : '';
+    var prevWrapWidth = tableWrap ? tableWrap.style.width : '';
+    var prevOverviewWidth = overview.style.width;
+    var prevOverviewMaxWidth = overview.style.maxWidth;
+    var prevBtnDisplay = shareBtn.style.display;
+
+    if (tableWrap) {
+      tableWrap.style.overflow = 'visible';
+      tableWrap.style.width = tableWrap.scrollWidth + 'px';
+    }
+    overview.style.width = overview.scrollWidth + 'px';
+    overview.style.maxWidth = 'none';
+    shareBtn.style.display = 'none';
+
+    html2canvas(overview, {
+      scale: 2,
+      backgroundColor: '#0f172a',
+      logging: false,
+      useCORS: true
+    })
+      .then(function (canvas) {
+        return new Promise(function (resolve, reject) {
+          canvas.toBlob(function (blob) {
+            if (!blob) {
+              reject(new Error('Could not create image'));
+              return;
+            }
+            resolve(blob);
+          }, 'image/png');
+        });
+      })
+      .then(function (blob) {
+        var filename = 'financial-' + (billDate || 'overview') + '.png';
+        var file = new File([blob], filename, { type: 'image/png' });
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+          return navigator.share({ files: [file], title: 'Financial overview' });
+        }
+        var url = URL.createObjectURL(blob);
+        var link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      })
+      .catch(function (err) {
+        if (err && err.name === 'AbortError') return;
+        alert(err && err.message ? err.message : 'Failed to create image');
+      })
+      .finally(function () {
+        if (tableWrap) {
+          tableWrap.style.overflow = prevWrapOverflow;
+          tableWrap.style.width = prevWrapWidth;
+        }
+        overview.style.width = prevOverviewWidth;
+        overview.style.maxWidth = prevOverviewMaxWidth;
+        shareBtn.style.display = prevBtnDisplay;
+        shareBtn.disabled = false;
+        shareBtn.textContent = label;
+      });
+  }
+
+  function renderFinancialOverview() {
+    var mount = document.getElementById('poweruser-financial-mount');
+    if (!mount) return;
+    mount.innerHTML = '<p class="poweruser-loading">Loading financial overview…</p>';
+    if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getFinancialOverview) {
+      mount.innerHTML = '<p class="poweruser-error">Financial API not available.</p>';
+      return;
+    }
+    ClaimsAPI.getFinancialOverview()
+      .then(function (data) {
+        if (!data || !data.billDate) {
+          mount.innerHTML = '<p class="poweruser-placeholder">No settled bills yet. Upload and close a bill to see the financial overview.</p>';
+          return;
+        }
+        var dateLabel = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
+          ? ClaimsFormatters.formatBillDateDisplay(data.billDate) : data.billDate;
+        var shareLabel = (typeof navigator !== 'undefined' && navigator.share) ? 'Share image' : 'Save image';
+        var html = '<div class="financial-overview" data-bill-date="' + escapeHtml(data.billDate) + '">';
+        html += '<div class="financial-overview__header">';
+        html += '<h2 class="financial-overview__title">Financial situation · ' + escapeHtml(dateLabel) + '</h2>';
+        html += '<button type="button" class="financial-overview__share-btn" id="financial-overview-share-btn">' + shareLabel + '</button>';
+        html += '</div>';
+        html += '<div class="financial-table-wrap"><table class="financial-table">';
+        html += '<thead><tr>';
+        html += '<th class="financial-table__name">Name</th>';
+        html += '<th colspan="2">Food</th><th colspan="2">Extras</th><th colspan="2">Drinks</th>';
+        html += '<th>Total</th><th>Due (incl tip)</th><th>c/f</th><th>Paid</th><th>Owed</th>';
+        html += '</tr></thead><tbody>';
+        var rows = data.rows || [];
+        for (var i = 0; i < rows.length; i++) {
+          var row = rows[i];
+          var rowClass = row.guestRow ? ' financial-table__row--guest' : '';
+          html += '<tr class="financial-table__row' + rowClass + '">';
+          html += '<td class="financial-table__name">' + escapeHtml(row.userName) + '</td>';
+          html += '<td class="financial-table__items">' + escapeHtml(row.food.items || '') + '</td>';
+          html += '<td class="financial-table__amt">' + (row.food.amount ? formatMoney(row.food.amount) : '') + '</td>';
+          html += '<td class="financial-table__items">' + escapeHtml(row.extras.items || '') + '</td>';
+          html += '<td class="financial-table__amt">' + (row.extras.amount ? formatMoney(row.extras.amount) : '') + '</td>';
+          html += '<td class="financial-table__items">' + escapeHtml(row.drinks.items || '') + '</td>';
+          html += '<td class="financial-table__amt">' + (row.drinks.amount ? formatMoney(row.drinks.amount) : '') + '</td>';
+          html += '<td class="financial-table__amt">' + (row.total ? formatMoney(row.total) : '') + '</td>';
+          html += '<td class="financial-table__amt">' + (row.dueWithTip ? formatMoney(row.dueWithTip) : '') + '</td>';
+          html += '<td class="financial-table__amt">' + formatMoneyOptional(row.carryForward) + '</td>';
+          html += '<td class="financial-table__amt">' + formatMoneyOptional(row.paid) + '</td>';
+          html += '<td class="financial-table__amt financial-table__amt--owed">' + formatMoneyOptional(row.owed) + '</td>';
+          html += '</tr>';
+        }
+        var footer = data.footer || {};
+        html += '<tr class="financial-table__footer">';
+        html += '<td></td>';
+        html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.foodTotal) + '</td>';
+        html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.extrasTotal) + '</td>';
+        html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.drinksTotal) + '</td>';
+        html += '<td class="financial-table__amt">' + formatMoney(footer.billTotal) + '</td>';
+        html += '<td class="financial-table__amt">' + formatMoney(footer.totalDueWithTip) + '</td>';
+        html += '<td class="financial-table__amt">' + formatMoney(footer.carryForwardTotal) + '</td>';
+        html += '<td class="financial-table__amt">' + formatMoney(footer.paidTotal) + '</td>';
+        html += '<td class="financial-table__amt">' + formatMoney(footer.owedTotal) + '</td>';
+        html += '</tr>';
+        html += '</tbody></table></div>';
+        html += '<div class="financial-overview__meta">';
+        html += '<p><span class="financial-overview__meta-label">Paid by JP</span> ' + formatMoney(footer.paidByJP) + '</p>';
+        html += '<p><span class="financial-overview__meta-label">Tip rate</span> ' + (footer.tipRate != null ? (footer.tipRate * 100).toFixed(2) + '%' : '—') + '</p>';
+        html += '<p><span class="financial-overview__meta-label">Tip amount</span> ' + formatMoney(footer.tipAmount) + '</p>';
+        html += '</div></div>';
+        mount.innerHTML = html;
+        var shareBtn = document.getElementById('financial-overview-share-btn');
+        if (shareBtn) {
+          shareBtn.addEventListener('click', function () {
+            shareFinancialOverviewImage(shareBtn, data.billDate);
+          });
+        }
+      })
+      .catch(function (err) {
+        mount.innerHTML = '<p class="poweruser-error">' + escapeHtml(err.message || 'Failed to load financial overview') + '</p>';
+      });
+  }
+
+  function renderRecordPayment() {
+    var mount = document.getElementById('poweruser-payment-mount');
+    if (!mount) return;
+    mount.innerHTML = '<p class="poweruser-loading">Loading…</p>';
+    if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getUserBalanceInfo) {
+      mount.innerHTML = '<p class="poweruser-error">Payment API not available.</p>';
+      return;
+    }
+    ClaimsAPI.getUserBalanceInfo()
+      .then(function (data) {
+        pageState.paymentBalanceInfo = data;
+        renderRecordPaymentContent(mount, data);
+      })
+      .catch(function (err) {
+        mount.innerHTML = '<p class="poweruser-error">' + escapeHtml(err.message || 'Failed to load') + '</p>';
+      });
+  }
+
+  function renderRecordPaymentContent(mount, data) {
+    var users = (data && data.users) ? data.users : [];
+    var html = '<div class="payment-record">';
+    html += '<h2 class="payment-record__title">Record a payment</h2>';
+    html += '<p class="payment-record__hint">Select a name to record a payment.</p>';
+    html += '<div class="payment-record__names">';
+    for (var i = 0; i < users.length; i++) {
+      var u = users[i];
+      var isActive = pageState.paymentSelectedUser === u.userName;
+      html += '<button type="button" class="payment-record__name-btn' + (isActive ? ' payment-record__name-btn--active' : '') + '" data-name="' + escapeHtml(u.userName) + '">';
+      html += escapeHtml(u.userName);
+      html += '<span class="payment-record__name-balance">' + formatMoney(u.balance) + '</span>';
+      html += '</button>';
+    }
+    html += '</div>';
+    html += '<div id="payment-record-form-mount"></div>';
+    html += '</div>';
+    mount.innerHTML = html;
+
+    var nameBtns = mount.querySelectorAll('.payment-record__name-btn');
+    for (var nb = 0; nb < nameBtns.length; nb++) {
+      nameBtns[nb].addEventListener('click', function () {
+        pageState.paymentSelectedUser = this.getAttribute('data-name');
+        renderRecordPaymentContent(mount, data);
+        renderPaymentForm(document.getElementById('payment-record-form-mount'), data);
+      });
+    }
+
+    if (pageState.paymentSelectedUser) {
+      renderPaymentForm(document.getElementById('payment-record-form-mount'), data);
+    }
+  }
+
+  function renderPaymentForm(formMount, data) {
+    if (!formMount || !pageState.paymentSelectedUser) return;
+    var users = (data && data.users) ? data.users : [];
+    var selected = null;
+    for (var i = 0; i < users.length; i++) {
+      if (users[i].userName === pageState.paymentSelectedUser) {
+        selected = users[i];
+        break;
+      }
+    }
+    if (!selected) return;
+
+    var balance = selected.balance != null ? parseFloat(selected.balance) : 0;
+    var prefilled = isNaN(balance) ? '' : Math.abs(balance).toFixed(2);
+    var latestBillLabel = selected.latestBillDate && typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
+      ? ClaimsFormatters.formatBillDateDisplay(selected.latestBillDate) : (selected.latestBillDate || '—');
+
+    var html = '<form class="payment-record__form" id="payment-record-form">';
+    html += '<h3 class="payment-record__form-title">Payment for ' + escapeHtml(selected.userName) + '</h3>';
+    html += '<label class="payment-record__field"><span class="payment-record__label">Payment date</span>';
+    html += '<input type="date" class="payment-record__input" id="payment-date" value="' + todayIsoDate() + '" required></label>';
+    html += '<p class="payment-record__summary"><span class="payment-record__label">Latest bill amount</span> ';
+    html += formatMoney(selected.latestBillDue) + (selected.latestBillDate ? ' · ' + escapeHtml(latestBillLabel) : '') + '</p>';
+    html += '<p class="payment-record__summary"><span class="payment-record__label">Current balance</span> ';
+    html += '<strong>' + formatMoney(selected.balance) + '</strong></p>';
+    html += '<label class="payment-record__field"><span class="payment-record__label">Amount paid</span>';
+    html += '<input type="number" class="payment-record__input payment-record__input--amount" id="payment-amount" ';
+    html += 'inputmode="decimal" step="0.01" min="0.01" value="' + prefilled + '" required></label>';
+    html += '<button type="submit" class="payment-record__submit" id="payment-submit-btn">Record payment</button>';
+    html += '<p class="payment-record__status" id="payment-status" aria-live="polite"></p>';
+    html += '</form>';
+    formMount.innerHTML = html;
+
+    var amountInput = document.getElementById('payment-amount');
+    if (amountInput) {
+      amountInput.addEventListener('focus', function () {
+        this.select();
+      });
+    }
+
+    var form = document.getElementById('payment-record-form');
+    if (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        onRecordPaymentSubmit(selected.userName);
+      });
+    }
+  }
+
+  function onRecordPaymentSubmit(userName) {
+    var dateEl = document.getElementById('payment-date');
+    var amountEl = document.getElementById('payment-amount');
+    var statusEl = document.getElementById('payment-status');
+    var submitBtn = document.getElementById('payment-submit-btn');
+    if (!dateEl || !amountEl) return;
+    var paymentDate = dateEl.value;
+    var amount = parseFloat(amountEl.value);
+    if (!paymentDate || isNaN(amount) || amount <= 0) {
+      if (statusEl) statusEl.textContent = 'Enter a valid date and amount.';
+      return;
+    }
+    if (submitBtn) submitBtn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Saving…';
+    ClaimsAPI.recordPayment({ userName: userName, paymentDate: paymentDate, amount: amount })
+      .then(function () {
+        if (statusEl) statusEl.textContent = 'Payment recorded.';
+        pageState.paymentSelectedUser = userName;
+        renderRecordPayment();
+        if (pageState.section === 'financial') renderFinancialOverview();
+        if (pageState.section === 'transactions') renderTransactions();
+      })
+      .catch(function (err) {
+        if (statusEl) statusEl.textContent = err.message || 'Failed to record payment.';
+        if (submitBtn) submitBtn.disabled = false;
+      });
   }
 
   /** Group bill items by description+category (bill order), one line per product with slots. */
@@ -435,7 +833,7 @@
           e.preventDefault();
           e.stopPropagation();
           var d = this.closest('.poweruser-bill-block').getAttribute('data-date');
-          if (!confirm('Delete this bill? This will remove all bill items, the BillMeta row, and the image file from Drive.')) return;
+          if (!confirm('Delete this bill? This will remove all bill items, metadata, and the stored bill image.')) return;
           var list = document.getElementById('poweruser-bills-list');
           var btn = this;
           if (typeof ClaimsAPI !== 'undefined' && ClaimsAPI.deleteBill) {

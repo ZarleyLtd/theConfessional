@@ -1,7 +1,6 @@
-# theConfessional API Contract (Frozen for Supabase Parity)
+# theConfessional API Contract
 
-This contract is extracted from `backend/code.gs` and `assets/js/utils/api.js`.
-The Supabase Edge Function must keep these action names and response shapes:
+This contract is implemented by `supabase/functions/theconfessional-api/index.ts` and consumed by `assets/js/utils/api.js`.
 
 - GET `action=dates` -> `[{ date: "YYYY-MM-DD", open: boolean }]`
 - GET `action=bill&date=YYYY-MM-DD` -> `{ items: BillItem[], metadata: { billImageUrl: string|null, totalPaid: number|null } }`
@@ -23,6 +22,15 @@ The Supabase Edge Function must keep these action names and response shapes:
   -> `{ date, billTotal, tipAmount, totalPaid }`
 - POST `action=deleteBill` payload `{ date }` -> `{ ok: true }`
 - POST `action=setBillOpen` payload `{ date, open }` -> `{ ok: true, open }`
+- GET `action=getFinancialOverview` -> `{ billDate, rows[], footer, balances[] }`
+- GET `action=getUserBalanceInfo` -> `{ users: [{ userName, balance, latestBillDue, latestBillDate }] }`
+- GET `action=getAllTransactions` -> `{ transactions: [{ date, type: 'opening'|'bill'|'payment', description, amount, billDate, userName }] }` — description format: `{Name} - Opening balance|Bill|Payment`
+- GET `action=getUserStatement&userName=X` -> `{ userName, currentBalance, transactions[] }`
+- POST `action=recordPayment` payload `{ userName, paymentDate, amount }` -> `{ ok: true, paymentDate, userName, amount }`
+
+Payments table: `payment_date`, `user_name`, `amount`
+
+Opening balances table: `user_name`, `as_of_date`, `balance`, `display_order` — defines the only financial account names; ledger bills start the day after `as_of_date`.
 
 All responses must keep envelope: `{ error: string|null, data: unknown }`.
 

@@ -6,7 +6,7 @@
   var CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
 
   var state = {
-    screen: 'home',       // 'home' | 'products'
+    screen: 'home',       // 'home' | 'products' | 'statement'
     isReviewMode: false,  // true when user selected from Historical bills
     enabledDates: [],
     enabledDatesFetchedAt: null,
@@ -118,6 +118,10 @@
       return;
     }
     setAppHomeClass(false);
+    if (state.screen === 'statement') {
+      renderStatementView();
+      return;
+    }
     renderProductsView();
   }
 
@@ -370,6 +374,9 @@
     if (!state.isReviewMode) {
       html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn"><span class="claims-submit-btn__text">Submit my claims</span><span class="claims-submit-btn__progress-wrap"><span class="claims-submit-btn__progress"></span></span></button>';
     }
+    if (state.userName) {
+      html += '<button type="button" class="claims-statement-btn" id="claims-statement-btn">My financial statement</button>';
+    }
     html += '</div></div></div>';
     html += '<button type="button" class="claims-back-to-top hidden" id="claims-back-to-top" aria-label="Back to top"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>';
     rootEl.innerHTML = html;
@@ -383,6 +390,10 @@
     }
     if (!state.isReviewMode) {
       document.getElementById('claims-submit-btn').addEventListener('click', onSubmit);
+    }
+    var statementBtn = document.getElementById('claims-statement-btn');
+    if (statementBtn) {
+      statementBtn.addEventListener('click', goToStatement);
     }
     var backToTopBtn = document.getElementById('claims-back-to-top');
     if (backToTopBtn) {
@@ -758,6 +769,116 @@
         }).catch(function () {});
       }
     });
+  }
+
+  function goToStatement() {
+    if (!state.userName) {
+      alert('Please enter your name first.');
+      return;
+    }
+    state.screen = 'statement';
+    renderShell();
+  }
+
+  function goBackFromStatement() {
+    if (state.selectedDate) {
+      state.screen = 'products';
+    } else {
+      state.screen = 'home';
+    }
+    renderShell();
+  }
+
+  function openBillFromStatement(billDate) {
+    if (!billDate) return;
+    state.selectedDate = billDate;
+    state.isReviewMode = true;
+    state.screen = 'products';
+    onBillSelectedContinue();
+  }
+
+  function renderStatementView() {
+    var html = '<div class="claims-hero-bg" aria-hidden="true"></div>';
+    html += '<div class="claims-products-topbar">';
+    html += '<button type="button" class="claims-home-btn" id="claims-statement-back-btn" aria-label="Back"><span class="claims-home-btn__icon-wrap"><svg class="claims-home-btn__icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></span><span class="claims-home-btn__label">Back</span></button>';
+    html += '<h1 class="claims-products-topbar__title">The Confessional</h1>';
+    html += '<span class="claims-products-topbar__spacer"></span>';
+    html += '</div>';
+    html += '<div class="claims-products-wrap">';
+    html += '<div class="statement-view">';
+    html += '<h2 class="statement-view__title">Financial statement</h2>';
+    html += '<p class="statement-view__user">Account: <strong>' + (state.userName || '') + '</strong></p>';
+    html += '<div id="statement-mount"><p class="statement-view__loading">Loading…</p></div>';
+    html += '</div></div>';
+    rootEl.innerHTML = html;
+    document.getElementById('claims-statement-back-btn').addEventListener('click', goBackFromStatement);
+
+    if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getUserStatement) {
+      document.getElementById('statement-mount').innerHTML = '<p class="statement-view__error">Statement not available.</p>';
+      return;
+    }
+    ClaimsAPI.getUserStatement(state.userName)
+      .then(function (data) {
+        renderStatementContent(document.getElementById('statement-mount'), data);
+      })
+      .catch(function (err) {
+        document.getElementById('statement-mount').innerHTML = '<p class="statement-view__error">' + (err.message || 'Failed to load statement') + '</p>';
+      });
+  }
+
+  function formatStatementMoney(val) {
+    if (val == null || isNaN(val)) return '—';
+    var n = parseFloat(val);
+    var formatted = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatCurrency
+      ? ClaimsFormatters.formatCurrency(Math.abs(n))
+      : ('€' + Math.abs(n).toFixed(2));
+    return n < 0 ? ('-' + formatted) : formatted;
+  }
+
+  function renderStatementContent(mount, data) {
+    if (!mount) return;
+    var balance = data.currentBalance != null ? parseFloat(data.currentBalance) : 0;
+    var balanceLabel = balance > 0 ? 'Owed' : (balance < 0 ? 'Due to you' : 'Balanced');
+    var html = '<p class="statement-view__balance">' + balanceLabel + ': <strong>' + formatStatementMoney(balance) + '</strong></p>';
+    var txns = data.transactions || [];
+    if (txns.length === 0) {
+      html += '<p class="statement-view__empty">No transactions yet.</p>';
+      mount.innerHTML = html;
+      return;
+    }
+    html += '<ul class="statement-list">';
+    for (var i = 0; i < txns.length; i++) {
+      var t = txns[i];
+      var dateLabel = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
+        ? ClaimsFormatters.formatBillDateDisplay(t.date) : t.date;
+      var isBill = t.type === 'bill';
+      var isOpening = t.type === 'opening';
+      var amountClass = isBill ? 'statement-list__amount--debit' : (isOpening ? 'statement-list__amount--opening' : 'statement-list__amount--credit');
+      html += '<li class="statement-list__item">';
+      html += '<div class="statement-list__main">';
+      html += '<span class="statement-list__date">' + dateLabel + '</span>';
+      html += '<span class="statement-list__desc">' + (t.description || (isBill ? 'Bill' : (isOpening ? 'Opening balance' : 'Payment'))) + '</span>';
+      if (!isOpening && t.amount != null) {
+        html += '<span class="statement-list__amount ' + amountClass + '">' + formatStatementMoney(t.amount) + '</span>';
+      } else if (isOpening) {
+        html += '<span class="statement-list__amount ' + amountClass + '">' + formatStatementMoney(t.balanceAfter) + '</span>';
+      }
+      html += '</div>';
+      html += '<div class="statement-list__balance">Balance: ' + formatStatementMoney(t.balanceAfter) + '</div>';
+      if (isBill && t.billDate) {
+        html += '<button type="button" class="statement-list__bill-link" data-date="' + t.billDate + '">View claims for this bill</button>';
+      }
+      html += '</li>';
+    }
+    html += '</ul>';
+    mount.innerHTML = html;
+
+    var billLinks = mount.querySelectorAll('.statement-list__bill-link');
+    for (var bl = 0; bl < billLinks.length; bl++) {
+      billLinks[bl].addEventListener('click', function () {
+        openBillFromStatement(this.getAttribute('data-date'));
+      });
+    }
   }
 
   var ClaimsPage = {
