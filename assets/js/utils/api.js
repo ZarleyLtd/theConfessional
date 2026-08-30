@@ -59,11 +59,15 @@
     updateBillTotalPaid: function (payload) { return post('updateBillTotalPaid', payload); },
     deleteBill: function (payload) { return post('deleteBill', payload); },
     setBillOpen: function (payload) { return post('setBillOpen', payload); },
-    getFinancialOverview: function () { return get('getFinancialOverview'); },
+    getFinancialOverview: function (billDate) {
+      return get('getFinancialOverview', billDate ? { billDate: billDate } : undefined);
+    },
     getUserBalanceInfo: function () { return get('getUserBalanceInfo'); },
     getAllTransactions: function () { return get('getAllTransactions'); },
     getUserStatement: function (userName) { return get('getUserStatement', { userName: userName }); },
-    recordPayment: function (payload) { return post('recordPayment', payload); }
+    recordPayment: function (payload) { return post('recordPayment', payload); },
+    updatePayment: function (payload) { return post('updatePayment', payload); },
+    deletePayment: function (payload) { return post('deletePayment', payload); }
   };
 
   global.ClaimsAPI = api;

@@ -635,6 +635,7 @@ type FinBill = {
 };
 
 type FinPayment = {
+  id: number;
   paymentDate: string;
   userName: string;
   amount: number;
@@ -767,13 +768,42 @@ function analyzeBillForFinancial(bill: FinBill) {
 
 const FINANCIAL_GUEST_JOHN = "John";
 
+function isJohnGuestName(name: string): boolean {
+  return normalizeUserName(name) === normalizeUserName(FINANCIAL_GUEST_JOHN);
+}
+
+function findBillShareForUser(
+  analysis: ReturnType<typeof analyzeBillForFinancial>,
+  targetName: string,
+) {
+  let share = analysis.userRows[targetName];
+  if (!share) {
+    for (const rawName of Object.keys(analysis.userRows)) {
+      if (normalizeUserName(rawName) === normalizeUserName(targetName)) {
+        share = analysis.userRows[rawName];
+        break;
+      }
+    }
+  }
+  if (!share || share.total <= 0) return null;
+  return share;
+}
+
 function findJohnBillShare(
   analysis: ReturnType<typeof analyzeBillForFinancial>,
 ) {
-  let share = analysis.userRows[FINANCIAL_GUEST_JOHN];
+  return findBillShareForUser(analysis, FINANCIAL_GUEST_JOHN);
+}
+
+function findFinancialBillShare(
+  analysis: ReturnType<typeof analyzeBillForFinancial>,
+  userName: string,
+  financialNames: string[],
+) {
+  let share = analysis.userRows[userName];
   if (!share) {
     for (const rawName of Object.keys(analysis.userRows)) {
-      if (normalizeUserName(rawName) === normalizeUserName(FINANCIAL_GUEST_JOHN)) {
+      if (resolveFinancialName(rawName, financialNames) === userName) {
         share = analysis.userRows[rawName];
         break;
       }
@@ -808,6 +838,50 @@ function resolveFinancialName(
   return null;
 }
 
+/** Claim/payment names that are not standard ledger accounts (excluding John). */
+function collectGuestNames(
+  bills: FinBill[],
+  payments: FinPayment[],
+  financialNames: string[],
+): string[] {
+  const normToDisplay: Record<string, string> = {};
+  const addName = (raw: string) => {
+    const trimmed = String(raw || "").trim();
+    if (!trimmed) return;
+    if (resolveFinancialName(trimmed, financialNames)) return;
+    if (isJohnGuestName(trimmed)) return;
+    const norm = normalizeUserName(trimmed);
+    if (!normToDisplay[norm]) normToDisplay[norm] = trimmed;
+  };
+  for (const bill of bills) {
+    for (const claim of bill.claims) addName(claim.userName);
+  }
+  for (const payment of payments) addName(payment.userName);
+  return Object.values(normToDisplay).sort((a, b) => a.localeCompare(b));
+}
+
+function resolveGuestName(
+  name: string,
+  guestNames: string[],
+): string | null {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return null;
+  const norm = normalizeUserName(trimmed);
+  for (const guestName of guestNames) {
+    if (normalizeUserName(guestName) === norm) return guestName;
+  }
+  return null;
+}
+
+function resolveLedgerName(
+  name: string,
+  financialNames: string[],
+  guestNames: string[],
+): string | null {
+  return resolveFinancialName(name, financialNames) ||
+    resolveGuestName(name, guestNames);
+}
+
 function billStartDateFromAsOf(asOfDate: string): string {
   const d = new Date(asOfDate + "T12:00:00");
   d.setDate(d.getDate() + 1);
@@ -824,11 +898,15 @@ function buildFinancialLedger(
     .sort((a, b) => a.displayOrder - b.displayOrder)
     .map((u) => u.userName);
 
-  const nameSet: Record<string, boolean> = {};
+  const guestNames = collectGuestNames(bills, payments, financialNames);
+  const ledgerNames = [...financialNames, ...guestNames];
+
   const balances: Record<string, number> = {};
   for (const u of opening.users) {
-    nameSet[u.userName] = true;
     balances[u.userName] = roundMoney(u.balance);
+  }
+  for (const guestName of guestNames) {
+    balances[guestName] = 0;
   }
 
   const settled = bills
@@ -843,7 +921,7 @@ function buildFinancialLedger(
 
   const paymentsByDate: Record<string, FinPayment[]> = {};
   for (const p of payments) {
-    const canon = resolveFinancialName(p.userName, financialNames);
+    const canon = resolveLedgerName(p.userName, financialNames, guestNames);
     if (!canon) continue;
     if (!paymentsByDate[p.paymentDate]) paymentsByDate[p.paymentDate] = [];
     paymentsByDate[p.paymentDate].push({ ...p, userName: canon });
@@ -852,7 +930,7 @@ function buildFinancialLedger(
   const dateSet = new Set<string>();
   for (const b of settled) dateSet.add(b.date);
   for (const p of payments) {
-    if (resolveFinancialName(p.userName, financialNames)) {
+    if (resolveLedgerName(p.userName, financialNames, guestNames)) {
       dateSet.add(p.paymentDate);
     }
   }
@@ -867,16 +945,11 @@ function buildFinancialLedger(
       const analysis = analyzeBillForFinancial(bill);
       billSnapshots[bill.date] = {};
 
-      for (const userName of orderedNames) {
-        let share = analysis.userRows[userName];
-        if (!share) {
-          for (const rawName of Object.keys(analysis.userRows)) {
-            if (resolveFinancialName(rawName, financialNames) === userName) {
-              share = analysis.userRows[rawName];
-              break;
-            }
-          }
-        }
+      for (const userName of ledgerNames) {
+        const isGuest = guestNames.includes(userName);
+        const share = isGuest
+          ? findBillShareForUser(analysis, userName)
+          : findFinancialBillShare(analysis, userName, financialNames);
         const cf = roundMoney(balances[userName] || 0);
         const due = share ? share.dueWithTip : 0;
         if (due > 0) {
@@ -908,10 +981,12 @@ function buildFinancialLedger(
     }
 
     if (bill && billSnapshots[bill.date]) {
-      for (const userName of orderedNames) {
-        billSnapshots[bill.date][userName].owed = roundMoney(
-          balances[userName] || 0,
-        );
+      for (const userName of ledgerNames) {
+        if (billSnapshots[bill.date][userName]) {
+          billSnapshots[bill.date][userName].owed = roundMoney(
+            balances[userName] || 0,
+          );
+        }
       }
     }
   }
@@ -920,6 +995,8 @@ function buildFinancialLedger(
   return {
     balances,
     orderedNames,
+    guestNames,
+    ledgerNames,
     billSnapshots,
     latestBill,
     userLatestBillDue,
@@ -982,17 +1059,21 @@ async function loadOpeningBalances(
 
 async function loadPayments(sb: ReturnType<typeof createClient>): Promise<FinPayment[]> {
   const { data, error } = await sb.from("payments").select(
-    "payment_date, user_name, amount",
+    "id, payment_date, user_name, amount",
   ).order("payment_date", { ascending: true }).order("id", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data || []).map((r: { payment_date: string; user_name: string; amount: number }) => ({
+  return (data || []).map((r: { id: number; payment_date: string; user_name: string; amount: number }) => ({
+    id: Number(r.id),
     paymentDate: formatDate(r.payment_date) as string,
     userName: String(r.user_name || "").trim(),
     amount: roundMoney(Number(r.amount) || 0),
-  })).filter((p: FinPayment) => !!p.paymentDate && p.userName && p.amount > 0);
+  })).filter((p: FinPayment) => !!p.id && !!p.paymentDate && p.userName && p.amount > 0);
 }
 
-async function getFinancialOverview(sb: ReturnType<typeof createClient>) {
+async function getFinancialOverview(
+  sb: ReturnType<typeof createClient>,
+  billDateParam?: string | null,
+) {
   const [bills, payments, opening] = await Promise.all([
     loadFinancialBills(sb),
     loadPayments(sb),
@@ -1003,6 +1084,9 @@ async function getFinancialOverview(sb: ReturnType<typeof createClient>) {
   if (!latestBill) {
     return {
       billDate: null,
+      prevBillDate: null,
+      nextBillDate: null,
+      isLatest: true,
       openingAsOf: opening.asOfDate,
       rows: opening.users
         .slice()
@@ -1026,8 +1110,21 @@ async function getFinancialOverview(sb: ReturnType<typeof createClient>) {
     };
   }
 
-  const analysis = analyzeBillForFinancial(latestBill);
-  const snapshots = ledger.billSnapshots[latestBill.date] || {};
+  const billDates = Object.keys(ledger.billSnapshots).sort();
+  let targetDate = billDateParam ? formatDate(billDateParam) : latestBill.date;
+  if (!targetDate || !ledger.billSnapshots[targetDate]) {
+    targetDate = latestBill.date;
+  }
+  const targetIdx = billDates.indexOf(targetDate);
+  const prevBillDate = targetIdx > 0 ? billDates[targetIdx - 1] : null;
+  const nextBillDate = targetIdx >= 0 && targetIdx < billDates.length - 1
+    ? billDates[targetIdx + 1]
+    : null;
+  const isLatest = targetDate === billDates[billDates.length - 1];
+
+  const targetBill = bills.find((b) => b.date === targetDate) || latestBill;
+  const analysis = analyzeBillForFinancial(targetBill);
+  const snapshots = ledger.billSnapshots[targetDate] || {};
   const rows = ledger.orderedNames.map((userName) => {
     const snap = snapshots[userName] || {
       food: { items: "", amount: 0 },
@@ -1051,6 +1148,25 @@ async function getFinancialOverview(sb: ReturnType<typeof createClient>) {
       owed: snap.owed,
     };
   });
+
+  for (const guestName of ledger.guestNames) {
+    const snap = snapshots[guestName];
+    if (!snap) continue;
+    const hasActivity = snap.dueWithTip !== 0 || snap.carryForward !== 0 ||
+      snap.paid !== 0 || snap.owed !== 0;
+    if (!hasActivity) continue;
+    rows.push({
+      userName: guestName,
+      food: snap.food,
+      extras: snap.extras,
+      drinks: snap.drinks,
+      total: snap.total,
+      dueWithTip: snap.dueWithTip,
+      carryForward: snap.carryForward,
+      paid: snap.paid,
+      owed: snap.owed,
+    });
+  }
 
   const johnShare = findJohnBillShare(analysis);
   if (johnShare) {
@@ -1096,7 +1212,10 @@ async function getFinancialOverview(sb: ReturnType<typeof createClient>) {
     : 0;
 
   return {
-    billDate: latestBill.date,
+    billDate: targetDate,
+    prevBillDate,
+    nextBillDate,
+    isLatest,
     rows,
     footer: {
       foodTotal: footerFood,
@@ -1125,8 +1244,20 @@ async function getUserBalanceInfo(sb: ReturnType<typeof createClient>) {
     loadOpeningBalances(sb),
   ]);
   const ledger = buildFinancialLedger(bills, payments, opening);
-  return {
-    users: ledger.orderedNames.map((userName) => ({
+  const standardUsers = ledger.orderedNames.map((userName) => ({
+    userName,
+    balance: roundMoney(ledger.balances[userName] || 0),
+    latestBillDue: ledger.userLatestBillDue[userName]
+      ? ledger.userLatestBillDue[userName].due
+      : 0,
+    latestBillDate: ledger.userLatestBillDue[userName]
+      ? ledger.userLatestBillDue[userName].date
+      : null,
+    isGuest: false,
+  }));
+  const guestUsers = ledger.guestNames
+    .filter((userName) => roundMoney(ledger.balances[userName] || 0) !== 0)
+    .map((userName) => ({
       userName,
       balance: roundMoney(ledger.balances[userName] || 0),
       latestBillDue: ledger.userLatestBillDue[userName]
@@ -1135,7 +1266,10 @@ async function getUserBalanceInfo(sb: ReturnType<typeof createClient>) {
       latestBillDate: ledger.userLatestBillDue[userName]
         ? ledger.userLatestBillDue[userName].date
         : null,
-    })),
+      isGuest: true,
+    }));
+  return {
+    users: [...standardUsers, ...guestUsers],
   };
 }
 
@@ -1251,11 +1385,16 @@ async function getAllTransactions(sb: ReturnType<typeof createClient>) {
     loadPayments(sb),
     loadOpeningBalances(sb),
   ]);
+  const ledger = buildFinancialLedger(bills, payments, opening);
   const financialNames = opening.users.map((u) => u.userName);
 
   const orderIndex: Record<string, number> = {};
   for (const u of opening.users) {
     orderIndex[u.userName] = u.displayOrder;
+  }
+  orderIndex[FINANCIAL_GUEST_JOHN] = -1;
+  for (let i = 0; i < ledger.guestNames.length; i++) {
+    orderIndex[ledger.guestNames[i]] = 1000 + i;
   }
 
   const transactions: Array<{
@@ -1265,6 +1404,8 @@ async function getAllTransactions(sb: ReturnType<typeof createClient>) {
     amount: number;
     billDate: string | null;
     userName: string | null;
+    foodItems?: string;
+    paymentId?: number;
   }> = [];
 
   for (const u of opening.users) {
@@ -1286,18 +1427,17 @@ async function getAllTransactions(sb: ReturnType<typeof createClient>) {
 
   for (const bill of settled) {
     const analysis = analyzeBillForFinancial(bill);
-    for (const userName of financialNames) {
-      let share = analysis.userRows[userName];
-      if (!share) {
-        for (const rawName of Object.keys(analysis.userRows)) {
-          if (resolveFinancialName(rawName, financialNames) === userName) {
-            share = analysis.userRows[rawName];
-            break;
-          }
-        }
-      }
-      const due = share ? share.dueWithTip : 0;
+    const snapshots = ledger.billSnapshots[bill.date] || {};
+
+    for (const userName of ledger.orderedNames) {
+      const snap = snapshots[userName];
+      const due = snap ? snap.dueWithTip : 0;
       if (due <= 0) continue;
+      const claimedItems = snap
+        ? [snap.food.items, snap.extras.items, snap.drinks.items]
+          .filter((s) => String(s || "").trim() !== "")
+          .join(", ")
+        : "";
       transactions.push({
         date: bill.date,
         type: "bill",
@@ -1305,12 +1445,53 @@ async function getAllTransactions(sb: ReturnType<typeof createClient>) {
         amount: roundMoney(due),
         billDate: bill.date,
         userName,
+        foodItems: claimedItems,
+      });
+    }
+
+    for (const guestName of ledger.guestNames) {
+      const snap = snapshots[guestName];
+      const due = snap ? snap.dueWithTip : 0;
+      if (due <= 0) continue;
+      const claimedItems = snap
+        ? [snap.food.items, snap.extras.items, snap.drinks.items]
+          .filter((s) => String(s || "").trim() !== "")
+          .join(", ")
+        : "";
+      transactions.push({
+        date: bill.date,
+        type: "bill",
+        description: guestName + " - Bill",
+        amount: roundMoney(due),
+        billDate: bill.date,
+        userName: guestName,
+        foodItems: claimedItems,
+      });
+    }
+
+    const johnShare = findJohnBillShare(analysis);
+    if (johnShare && johnShare.dueWithTip > 0) {
+      const johnItems = [
+        johnShare.food.items,
+        johnShare.extras.items,
+        johnShare.drinks.items,
+      ]
+        .filter((s) => String(s || "").trim() !== "")
+        .join(", ");
+      transactions.push({
+        date: bill.date,
+        type: "bill",
+        description: FINANCIAL_GUEST_JOHN + " - Bill",
+        amount: roundMoney(johnShare.dueWithTip),
+        billDate: bill.date,
+        userName: FINANCIAL_GUEST_JOHN,
+        foodItems: johnItems,
       });
     }
   }
 
   for (const p of payments) {
-    const canon = resolveFinancialName(p.userName, financialNames);
+    const canon = resolveLedgerName(p.userName, financialNames, ledger.guestNames);
     if (!canon) continue;
     transactions.push({
       date: p.paymentDate,
@@ -1319,6 +1500,7 @@ async function getAllTransactions(sb: ReturnType<typeof createClient>) {
       amount: roundMoney(p.amount),
       billDate: null,
       userName: canon,
+      paymentId: p.id,
     });
   }
 
@@ -1350,9 +1532,17 @@ async function recordPayment(
   const amount = Number(body.amount);
   if (!paymentDate || !userName) throw new Error("Missing paymentDate or userName");
   if (isNaN(amount) || amount <= 0) throw new Error("Invalid amount");
-  const opening = await loadOpeningBalances(sb);
+  if (isJohnGuestName(userName)) {
+    throw new Error("Payments cannot be recorded for John");
+  }
+  const [bills, payments, opening] = await Promise.all([
+    loadFinancialBills(sb),
+    loadPayments(sb),
+    loadOpeningBalances(sb),
+  ]);
   const financialNames = opening.users.map((u) => u.userName);
-  const canon = resolveFinancialName(userName, financialNames);
+  const guestNames = collectGuestNames(bills, payments, financialNames);
+  const canon = resolveLedgerName(userName, financialNames, guestNames);
   if (!canon) throw new Error("No financial account for this name");
   const { error } = await sb.from("payments").insert({
     payment_date: paymentDate,
@@ -1368,6 +1558,41 @@ async function recordPayment(
   };
 }
 
+async function updatePayment(
+  sb: ReturnType<typeof createClient>,
+  body: Record<string, unknown>,
+) {
+  const id = Number(body.id);
+  const paymentDate = formatDate(body.paymentDate);
+  const amount = Number(body.amount);
+  if (!id || !paymentDate) throw new Error("Missing id or paymentDate");
+  if (isNaN(amount) || amount <= 0) throw new Error("Invalid amount");
+  const { data, error } = await sb.from("payments").update({
+    payment_date: paymentDate,
+    amount: roundMoney(amount),
+  }).eq("id", id).select("id").maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Payment not found");
+  return {
+    ok: true,
+    id,
+    paymentDate,
+    amount: roundMoney(amount),
+  };
+}
+
+async function deletePayment(
+  sb: ReturnType<typeof createClient>,
+  body: Record<string, unknown>,
+) {
+  const id = Number(body.id);
+  if (!id) throw new Error("Missing payment id");
+  const { data, error } = await sb.from("payments").delete().eq("id", id).select("id").maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Payment not found");
+  return { ok: true, id };
+}
+
 async function doGet(sb: ReturnType<typeof createClient>, url: URL) {
   const action = url.searchParams.get("action") || "";
   const out: { error: string | null; data: unknown } = { error: null, data: null };
@@ -1381,7 +1606,9 @@ async function doGet(sb: ReturnType<typeof createClient>, url: URL) {
     else if (action === "getAllBillsFull") out.data = await getAllBillsFull(sb);
     else if (action === "getBillsSummary") out.data = await getBillsSummary(sb);
     else if (action === "getBillFull") out.data = await getBillFull(sb, url.searchParams.get("date") || "");
-    else if (action === "getFinancialOverview") out.data = await getFinancialOverview(sb);
+    else if (action === "getFinancialOverview") {
+      out.data = await getFinancialOverview(sb, url.searchParams.get("billDate"));
+    }
     else if (action === "getUserBalanceInfo") out.data = await getUserBalanceInfo(sb);
     else if (action === "getAllTransactions") out.data = await getAllTransactions(sb);
     else if (action === "getUserStatement") {
@@ -1411,6 +1638,8 @@ async function doPost(sb: ReturnType<typeof createClient>, req: Request) {
     else if (action === "deleteBill") out.data = await deleteBill(sb, body);
     else if (action === "setBillOpen") out.data = await setBillOpen(sb, body);
     else if (action === "recordPayment") out.data = await recordPayment(sb, body);
+    else if (action === "updatePayment") out.data = await updatePayment(sb, body);
+    else if (action === "deletePayment") out.data = await deletePayment(sb, body);
     else throw new Error("Unknown or missing action");
   } catch (err) {
     out.error = err instanceof Error ? err.message : String(err);

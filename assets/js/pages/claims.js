@@ -881,9 +881,43 @@
     }
   }
 
+  function parseInitialDeepLink() {
+    if (typeof window === 'undefined' || !window.location || !window.location.search) return null;
+    var params = new URLSearchParams(window.location.search);
+    var date = params.get('date') || params.get('billDate');
+    var userName = params.get('user') || params.get('userName') || params.get('name');
+    if (!date || !userName) return null;
+    return { date: date, userName: userName };
+  }
+
+  function openBillFromDeepLink(deepLink) {
+    if (!deepLink || !deepLink.date || !deepLink.userName) return;
+    state.userName = deepLink.userName;
+    state.selectedDate = deepLink.date;
+    state.isReviewMode = true;
+    if (!state.configNames || state.configNames.length === 0) {
+      ClaimsAPI.getConfigNames().then(function (names) {
+        state.configNames = names || [];
+        state.userName = normalizeUserName(state.userName);
+        onBillSelectedContinue();
+      }).catch(function () {
+        state.userName = normalizeUserName(state.userName);
+        onBillSelectedContinue();
+      });
+      return;
+    }
+    state.userName = normalizeUserName(state.userName);
+    onBillSelectedContinue();
+  }
+
   var ClaimsPage = {
     init: function (el) {
       rootEl = el;
+      var deepLink = parseInitialDeepLink();
+      if (deepLink) {
+        openBillFromDeepLink(deepLink);
+        return;
+      }
       render();
     }
   };

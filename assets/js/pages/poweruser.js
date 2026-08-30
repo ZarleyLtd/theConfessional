@@ -6,7 +6,93 @@
 (function (global) {
   var rootEl;
   var reviewState = { billsData: null, viewModeByDate: {}, expandedDate: null, billCache: {}, billFetchPromises: {}, billImageCache: {} };
-  var pageState = { section: 'bills', paymentSelectedUser: null, paymentBalanceInfo: null };
+  var pageState = { section: 'bills', paymentSelectedUser: null, paymentBalanceInfo: null, financialBillDate: null };
+  var RETURN_STATE_KEY = 'poweruserReturnState';
+
+  function getSectionFromUrl() {
+    if (typeof window === 'undefined' || !window.location) return null;
+    var section = new URLSearchParams(window.location.search).get('section');
+    if (section === 'bills' || section === 'transactions' || section === 'financial' || section === 'payment') {
+      return section;
+    }
+    return null;
+  }
+
+  function syncSectionUrl(section) {
+    if (typeof window === 'undefined' || !window.history || !window.history.replaceState) return;
+    var url = new URL(window.location.href);
+    if (section && section !== 'bills') url.searchParams.set('section', section);
+    else url.searchParams.delete('section');
+    var next = url.pathname + url.search + url.hash;
+    var current = window.location.pathname + window.location.search + window.location.hash;
+    if (next !== current) {
+      window.history.replaceState({ poweruserSection: section }, '', next);
+    }
+  }
+
+  function readReturnState() {
+    try {
+      var raw = sessionStorage.getItem(RETURN_STATE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function saveReturnState(txnKey) {
+    try {
+      sessionStorage.setItem(RETURN_STATE_KEY, JSON.stringify({
+        section: pageState.section,
+        scrollY: window.scrollY || 0,
+        txnKey: txnKey || null
+      }));
+    } catch (e) {}
+    syncSectionUrl(pageState.section);
+  }
+
+  function clearReturnState() {
+    try {
+      sessionStorage.removeItem(RETURN_STATE_KEY);
+    } catch (e) {}
+  }
+
+  function buildTransactionKey(type, billDate, date, userName, paymentId) {
+    if (type === 'payment') {
+      return String(date || '') + '|' + String(userName || '') + '|payment|' + String(paymentId || '');
+    }
+    return String(billDate || date || '') + '|' + String(userName || '') + '|bill';
+  }
+
+  function restoreTransactionsView(mount) {
+    var state = readReturnState();
+    if (!state || state.section !== 'transactions') return;
+    clearReturnState();
+
+    function applyRestore() {
+      var restored = false;
+      if (state.txnKey && mount) {
+        var rows = mount.querySelectorAll('[data-txn-key]');
+        for (var i = 0; i < rows.length; i++) {
+          if (rows[i].getAttribute('data-txn-key') === state.txnKey) {
+            rows[i].classList.add('poweruser-transactions-list__item--returned');
+            rows[i].scrollIntoView({ block: 'center', behavior: 'auto' });
+            restored = true;
+            break;
+          }
+        }
+      }
+      if (!restored && state.scrollY > 0) {
+        window.scrollTo(0, state.scrollY);
+      }
+    }
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(applyRestore);
+    } else {
+      setTimeout(applyRestore, 0);
+    }
+  }
 
   /** ++ button: must match `GEMINI_BILL_ALLOWED_MODELS` in the edge function. */
   var ALT_GEMINI_MODEL_CHOICES = [
@@ -80,10 +166,10 @@
     html += '</div>';
     html += '<div class="poweruser-content">';
     html += '<nav class="poweruser-nav" aria-label="God Mode sections">';
-    html += '<button type="button" class="poweruser-nav__btn poweruser-nav__btn--active" data-section="bills">Bills</button>';
-    html += '<button type="button" class="poweruser-nav__btn" data-section="transactions">Transactions</button>';
-    html += '<button type="button" class="poweruser-nav__btn" data-section="financial">Financial</button>';
-    html += '<button type="button" class="poweruser-nav__btn" data-section="payment">Record Payment</button>';
+    html += '<button type="button" class="poweruser-nav__btn poweruser-nav__btn--active" data-section="bills" title="Bills" aria-label="Bills"><span class="poweruser-nav__icon" aria-hidden="true">🧾</span></button>';
+    html += '<button type="button" class="poweruser-nav__btn" data-section="transactions" title="Transactions" aria-label="Transactions"><span class="poweruser-nav__icon" aria-hidden="true">📜</span></button>';
+    html += '<button type="button" class="poweruser-nav__btn" data-section="financial" title="Classic View" aria-label="Classic View"><span class="poweruser-nav__icon" aria-hidden="true">📊</span></button>';
+    html += '<button type="button" class="poweruser-nav__btn" data-section="payment" title="Record Payment" aria-label="Record Payment"><span class="poweruser-nav__icon" aria-hidden="true">💰</span></button>';
     html += '</nav>';
     html += '<div class="poweruser-main-wrap">';
     html += '<section id="poweruser-review" class="poweruser-section poweruser-section--active" data-section="bills">';
@@ -144,6 +230,7 @@
 
   function switchSection(section) {
     pageState.section = section || 'bills';
+    syncSectionUrl(pageState.section);
     var navBtns = rootEl.querySelectorAll('.poweruser-nav__btn');
     for (var i = 0; i < navBtns.length; i++) {
       var btn = navBtns[i];
@@ -186,14 +273,34 @@
             ? ClaimsFormatters.formatBillDateDisplay(t.date) : t.date;
           var isBill = t.type === 'bill';
           var isOpening = t.type === 'opening';
+          var isPayment = t.type === 'payment';
+          var isClickable = isBill || isPayment;
           var amountClass = isBill
             ? 'poweruser-transactions-list__amount--bill'
             : (isOpening ? 'poweruser-transactions-list__amount--opening' : 'poweruser-transactions-list__amount--payment');
           var desc = t.description || '';
+          var foodItems = isBill ? (t.foodItems || '') : '';
           var itemClass = 'poweruser-transactions-list__item';
           if (isBill) itemClass += ' poweruser-transactions-list__item--bill';
           else if (!isOpening) itemClass += ' poweruser-transactions-list__item--payment';
-          html += '<li class="' + itemClass + '">';
+          if (isClickable) itemClass += ' poweruser-transactions-list__item--clickable';
+          if (foodItems) itemClass += ' poweruser-transactions-list__item--has-detail';
+          var txnKey = isClickable
+            ? buildTransactionKey(t.type, t.billDate, t.date, t.userName, t.paymentId)
+            : '';
+          html += '<li>';
+          html += '<div class="' + itemClass + '"';
+          if (isClickable) {
+            html += ' role="button" tabindex="0"';
+            html += ' data-txn-key="' + escapeHtml(txnKey) + '"';
+            html += ' data-txn-type="' + escapeHtml(t.type) + '"';
+            html += ' data-txn-date="' + escapeHtml(t.date || '') + '"';
+            html += ' data-txn-user="' + escapeHtml(t.userName || '') + '"';
+            if (t.billDate) html += ' data-txn-bill-date="' + escapeHtml(t.billDate) + '"';
+            if (t.paymentId != null) html += ' data-txn-payment-id="' + escapeHtml(String(t.paymentId)) + '"';
+            if (t.amount != null) html += ' data-txn-amount="' + escapeHtml(String(t.amount)) + '"';
+          }
+          html += '>';
           html += '<div class="poweruser-transactions-list__main">';
           if (showDate) {
             html += '<span class="poweruser-transactions-list__date">' + escapeHtml(dateLabel) + '</span>';
@@ -201,16 +308,162 @@
             html += '<span class="poweruser-transactions-list__date poweruser-transactions-list__date--repeat"></span>';
           }
           html += '<span class="poweruser-transactions-list__desc">' + escapeHtml(desc) + '</span>';
+          if (foodItems) {
+            html += '<span class="poweruser-transactions-list__detail" title="' + escapeHtml(foodItems) + '">' + escapeHtml(foodItems) + '</span>';
+          }
           html += '<span class="poweruser-transactions-list__amount ' + amountClass + '">' + formatMoney(t.amount) + '</span>';
+          html += '</div>';
           html += '</div>';
           html += '</li>';
         }
         html += '</ul></div>';
         mount.innerHTML = html;
+
+        var clickables = mount.querySelectorAll('.poweruser-transactions-list__item--clickable');
+        for (var ci = 0; ci < clickables.length; ci++) {
+          clickables[ci].addEventListener('click', onTransactionLineClick);
+          clickables[ci].addEventListener('keydown', onTransactionLineKeydown);
+        }
+        restoreTransactionsView(mount);
       })
       .catch(function (err) {
         mount.innerHTML = '<p class="poweruser-error">' + escapeHtml(err.message || 'Failed to load transactions') + '</p>';
       });
+  }
+
+  function buildClaimsPageUrl(date, userName) {
+    var url = new URL('index.html', window.location.href);
+    url.searchParams.set('date', date);
+    url.searchParams.set('user', userName);
+    return url.pathname + url.search;
+  }
+
+  function onTransactionLineClick() {
+    var type = this.getAttribute('data-txn-type');
+    if (type === 'bill') {
+      var billDate = this.getAttribute('data-txn-bill-date') || this.getAttribute('data-txn-date');
+      var userName = this.getAttribute('data-txn-user');
+      if (!billDate || !userName) return;
+      var txnKey = this.getAttribute('data-txn-key') || buildTransactionKey('bill', billDate, null, userName);
+      saveReturnState(txnKey);
+      window.location.href = buildClaimsPageUrl(billDate, userName);
+      return;
+    }
+    if (type === 'payment') {
+      var paymentId = this.getAttribute('data-txn-payment-id');
+      if (!paymentId) return;
+      openPaymentEditModal({
+        paymentId: parseInt(paymentId, 10),
+        userName: this.getAttribute('data-txn-user') || '',
+        paymentDate: this.getAttribute('data-txn-date') || '',
+        amount: parseFloat(this.getAttribute('data-txn-amount') || '0')
+      });
+    }
+  }
+
+  function onTransactionLineKeydown(e) {
+    if (!e || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    onTransactionLineClick.call(this);
+  }
+
+  function openPaymentEditModal(payment) {
+    if (!payment || !payment.paymentId) return;
+    var overlay = document.createElement('div');
+    overlay.className = 'poweruser-modal-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Edit payment');
+
+    var amountVal = payment.amount != null && !isNaN(payment.amount)
+      ? Math.abs(payment.amount).toFixed(2) : '';
+
+    var modal = document.createElement('div');
+    modal.className = 'poweruser-modal poweruser-modal--payment-edit';
+    modal.innerHTML =
+      '<h3 class="poweruser-modal__title">Edit payment</h3>' +
+      '<form class="payment-record__form payment-record__form--modal" id="payment-edit-form">' +
+      '<p class="payment-record__summary"><span class="payment-record__label">Name</span> <strong>' + escapeHtml(payment.userName) + '</strong></p>' +
+      '<label class="payment-record__field"><span class="payment-record__label">Payment date</span>' +
+      '<input type="date" class="payment-record__input" id="payment-edit-date" value="' + escapeHtml(payment.paymentDate || todayIsoDate()) + '" required></label>' +
+      '<label class="payment-record__field"><span class="payment-record__label">Amount paid</span>' +
+      '<input type="number" class="payment-record__input payment-record__input--amount" id="payment-edit-amount" ' +
+      'inputmode="decimal" step="0.01" min="0.01" value="' + escapeHtml(amountVal) + '" required></label>' +
+      '<p class="payment-record__status" id="payment-edit-status" aria-live="polite"></p>' +
+      '<div class="poweruser-modal__actions poweruser-modal__actions--payment-edit">' +
+      '<button type="button" class="poweruser-modal__cancel" id="payment-edit-cancel">Cancel</button>' +
+      '<button type="button" class="payment-record__delete" id="payment-edit-delete">Delete</button>' +
+      '<button type="submit" class="payment-record__submit" id="payment-edit-save">Save changes</button>' +
+      '</div></form>';
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    function closeModal() {
+      if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    }
+
+    modal.querySelector('#payment-edit-cancel').addEventListener('click', closeModal);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) closeModal();
+    });
+
+    var amountInput = modal.querySelector('#payment-edit-amount');
+    if (amountInput) {
+      amountInput.addEventListener('focus', function () { this.select(); });
+    }
+
+    modal.querySelector('#payment-edit-delete').addEventListener('click', function () {
+      if (!confirm('Delete this payment?')) return;
+      var statusEl = modal.querySelector('#payment-edit-status');
+      var deleteBtn = this;
+      var saveBtn = modal.querySelector('#payment-edit-save');
+      deleteBtn.disabled = true;
+      if (saveBtn) saveBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Deleting…';
+      ClaimsAPI.deletePayment({ id: payment.paymentId })
+        .then(function () {
+          closeModal();
+          renderTransactions();
+          if (pageState.section === 'financial') renderFinancialOverview();
+          if (pageState.section === 'payment') renderRecordPayment();
+        })
+        .catch(function (err) {
+          if (statusEl) statusEl.textContent = err.message || 'Failed to delete payment.';
+          deleteBtn.disabled = false;
+          if (saveBtn) saveBtn.disabled = false;
+        });
+    });
+
+    modal.querySelector('#payment-edit-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var dateEl = modal.querySelector('#payment-edit-date');
+      var amountEl = modal.querySelector('#payment-edit-amount');
+      var statusEl = modal.querySelector('#payment-edit-status');
+      var saveBtn = modal.querySelector('#payment-edit-save');
+      var deleteBtn = modal.querySelector('#payment-edit-delete');
+      if (!dateEl || !amountEl) return;
+      var paymentDate = dateEl.value;
+      var amount = parseFloat(amountEl.value);
+      if (!paymentDate || isNaN(amount) || amount <= 0) {
+        if (statusEl) statusEl.textContent = 'Enter a valid date and amount.';
+        return;
+      }
+      if (saveBtn) saveBtn.disabled = true;
+      if (deleteBtn) deleteBtn.disabled = true;
+      if (statusEl) statusEl.textContent = 'Saving…';
+      ClaimsAPI.updatePayment({ id: payment.paymentId, paymentDate: paymentDate, amount: amount })
+        .then(function () {
+          closeModal();
+          renderTransactions();
+          if (pageState.section === 'financial') renderFinancialOverview();
+          if (pageState.section === 'payment') renderRecordPayment();
+        })
+        .catch(function (err) {
+          if (statusEl) statusEl.textContent = err.message || 'Failed to update payment.';
+          if (saveBtn) saveBtn.disabled = false;
+          if (deleteBtn) deleteBtn.disabled = false;
+        });
+    });
   }
 
   function formatMoney(val) {
@@ -231,6 +484,31 @@
   function formatMoneyOptional(val) {
     if (val == null || val === '') return '';
     return formatMoney(val);
+  }
+
+  /** Largest |owed| among data rows (for traffic-light scaling). */
+  function getMaxAbsOwed(rows) {
+    var max = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var owed = rows[i].owed;
+      if (owed == null || owed === '') continue;
+      var n = parseFloat(owed);
+      if (!isNaN(n)) max = Math.max(max, Math.abs(n));
+    }
+    return max;
+  }
+
+  /** Traffic-light class for Owed cell: negative green, zero neutral, positive red. */
+  function getOwedTrafficClass(owed, maxAbsOwed) {
+    if (owed == null || owed === '') return '';
+    var n = parseFloat(owed);
+    if (isNaN(n) || maxAbsOwed <= 0 || Math.abs(n) < 0.005) {
+      return ' financial-table__amt--owed-neutral';
+    }
+    var ratio = Math.min(1, Math.abs(n) / maxAbsOwed);
+    var level = ratio > 0.66 ? '3' : (ratio > 0.33 ? '2' : '1');
+    if (n < 0) return ' financial-table__amt--owed-credit-' + level;
+    return ' financial-table__amt--owed-debit-' + level;
   }
 
   function shareFinancialOverviewImage(btn, billDate) {
@@ -318,20 +596,31 @@
       mount.innerHTML = '<p class="poweruser-error">Financial API not available.</p>';
       return;
     }
-    ClaimsAPI.getFinancialOverview()
+    ClaimsAPI.getFinancialOverview(pageState.financialBillDate)
       .then(function (data) {
         if (!data || !data.billDate) {
           mount.innerHTML = '<p class="poweruser-placeholder">No settled bills yet. Upload and close a bill to see the financial overview.</p>';
           return;
         }
+        pageState.financialBillDate = data.billDate;
         var dateLabel = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
           ? ClaimsFormatters.formatBillDateDisplay(data.billDate) : data.billDate;
         var shareLabel = (typeof navigator !== 'undefined' && navigator.share) ? 'Share image' : 'Save image';
+        var canGoPrev = !!data.prevBillDate;
+        var canGoNext = !!data.nextBillDate && data.isLatest !== true;
         var html = '<div class="financial-overview" data-bill-date="' + escapeHtml(data.billDate) + '">';
         html += '<div class="financial-overview__header">';
-        html += '<h2 class="financial-overview__title">Financial situation · ' + escapeHtml(dateLabel) + '</h2>';
+        html += '<h2 class="financial-overview__title">Classic View · ' + escapeHtml(dateLabel) + '</h2>';
+        html += '<div class="financial-overview__header-actions">';
         html += '<button type="button" class="financial-overview__share-btn" id="financial-overview-share-btn">' + shareLabel + '</button>';
-        html += '</div>';
+        html += '<div class="financial-overview__nav">';
+        html += '<button type="button" class="financial-overview__nav-btn" id="financial-overview-prev-btn" title="Previous bill"' + (canGoPrev ? '' : ' disabled') + ' aria-label="Previous bill">';
+        html += '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>';
+        html += '</button>';
+        html += '<button type="button" class="financial-overview__nav-btn" id="financial-overview-next-btn" title="Next bill"' + (canGoNext ? '' : ' disabled') + ' aria-label="Next bill">';
+        html += '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>';
+        html += '</button>';
+        html += '</div></div></div>';
         html += '<div class="financial-table-wrap"><table class="financial-table">';
         html += '<thead><tr>';
         html += '<th class="financial-table__name">Name</th>';
@@ -339,9 +628,11 @@
         html += '<th>Total</th><th>Due (incl tip)</th><th>c/f</th><th>Paid</th><th>Owed</th>';
         html += '</tr></thead><tbody>';
         var rows = data.rows || [];
+        var maxAbsOwed = getMaxAbsOwed(rows);
         for (var i = 0; i < rows.length; i++) {
           var row = rows[i];
           var rowClass = row.guestRow ? ' financial-table__row--guest' : '';
+          var owedClass = 'financial-table__amt financial-table__amt--owed' + getOwedTrafficClass(row.owed, maxAbsOwed);
           html += '<tr class="financial-table__row' + rowClass + '">';
           html += '<td class="financial-table__name">' + escapeHtml(row.userName) + '</td>';
           html += '<td class="financial-table__items">' + escapeHtml(row.food.items || '') + '</td>';
@@ -353,8 +644,8 @@
           html += '<td class="financial-table__amt">' + (row.total ? formatMoney(row.total) : '') + '</td>';
           html += '<td class="financial-table__amt">' + (row.dueWithTip ? formatMoney(row.dueWithTip) : '') + '</td>';
           html += '<td class="financial-table__amt">' + formatMoneyOptional(row.carryForward) + '</td>';
-          html += '<td class="financial-table__amt">' + formatMoneyOptional(row.paid) + '</td>';
-          html += '<td class="financial-table__amt financial-table__amt--owed">' + formatMoneyOptional(row.owed) + '</td>';
+          html += '<td class="financial-table__amt">' + (row.paid ? formatMoney(row.paid) : '') + '</td>';
+          html += '<td class="' + owedClass + '">' + formatMoneyOptional(row.owed) + '</td>';
           html += '</tr>';
         }
         var footer = data.footer || {};
@@ -382,6 +673,20 @@
             shareFinancialOverviewImage(shareBtn, data.billDate);
           });
         }
+        var prevBtn = document.getElementById('financial-overview-prev-btn');
+        if (prevBtn && data.prevBillDate) {
+          prevBtn.addEventListener('click', function () {
+            pageState.financialBillDate = data.prevBillDate;
+            renderFinancialOverview();
+          });
+        }
+        var nextBtn = document.getElementById('financial-overview-next-btn');
+        if (nextBtn && data.nextBillDate && data.isLatest !== true) {
+          nextBtn.addEventListener('click', function () {
+            pageState.financialBillDate = data.nextBillDate;
+            renderFinancialOverview();
+          });
+        }
       })
       .catch(function (err) {
         mount.innerHTML = '<p class="poweruser-error">' + escapeHtml(err.message || 'Failed to load financial overview') + '</p>';
@@ -407,7 +712,10 @@
   }
 
   function renderRecordPaymentContent(mount, data) {
-    var users = (data && data.users) ? data.users : [];
+    var users = (data && data.users) ? data.users.slice() : [];
+    users.sort(function (a, b) {
+      return String(a.userName || '').localeCompare(String(b.userName || ''));
+    });
     var html = '<div class="payment-record">';
     html += '<h2 class="payment-record__title">Record a payment</h2>';
     html += '<p class="payment-record__hint">Select a name to record a payment.</p>';
@@ -415,7 +723,8 @@
     for (var i = 0; i < users.length; i++) {
       var u = users[i];
       var isActive = pageState.paymentSelectedUser === u.userName;
-      html += '<button type="button" class="payment-record__name-btn' + (isActive ? ' payment-record__name-btn--active' : '') + '" data-name="' + escapeHtml(u.userName) + '">';
+      var guestClass = u.isGuest ? ' payment-record__name-btn--guest' : '';
+      html += '<button type="button" class="payment-record__name-btn' + guestClass + (isActive ? ' payment-record__name-btn--active' : '') + '" data-name="' + escapeHtml(u.userName) + '">';
       html += escapeHtml(u.userName);
       html += '<span class="payment-record__name-balance">' + formatMoney(u.balance) + '</span>';
       html += '</button>';
@@ -702,6 +1011,85 @@
     return result;
   }
 
+  /** Unclaimed slots grouped by product (same shape as buildByUserView entries). */
+  function buildUnclaimedView(bill) {
+    if (!bill || !bill.items) return null;
+    var claimMap = typeof ClaimsState !== 'undefined' && ClaimsState.buildClaimMap
+      ? ClaimsState.buildClaimMap(bill.claims) : {};
+    var consolidated = buildConsolidatedItems(bill);
+    var prods = {};
+    for (var i = 0; i < consolidated.length; i++) {
+      var g = consolidated[i];
+      for (var j = 0; j < g.slots.length; j++) {
+        var s = g.slots[j];
+        var k = s.rowIndex + '_' + s.unitIndex;
+        var name = (claimMap[k] || '').trim();
+        if (name) continue;
+        var key = g.description + '|' + g.unitPrice;
+        if (!prods[key]) {
+          prods[key] = { description: g.description, quantity: 0, unitPrice: g.unitPrice };
+        }
+        prods[key].quantity++;
+      }
+    }
+    var items = [];
+    var keys = Object.keys(prods);
+    for (var pk = 0; pk < keys.length; pk++) {
+      var p = prods[keys[pk]];
+      items.push({
+        description: p.description + (p.quantity > 1 ? ' x' + p.quantity : ''),
+        quantity: p.quantity,
+        unitPrice: p.unitPrice,
+        totalPrice: p.unitPrice * p.quantity
+      });
+    }
+    if (items.length === 0) return null;
+    var subtotal = items.reduce(function (s, it) { return s + (it.totalPrice || 0); }, 0);
+    return { items: items, subtotal: subtotal };
+  }
+
+  function appendUserBlock(viewPanel, userName, items, billTotal, tipAmount, options) {
+    options = options || {};
+    var userTotal = items.reduce(function (s, it) { return s + (it.totalPrice || 0); }, 0);
+    var userShare = billTotal > 0 ? userTotal / billTotal : 0;
+    var userTip = tipAmount * userShare;
+    var userTotalWithTip = userTotal + userTip;
+    var userBlock = document.createElement('div');
+    userBlock.className = 'poweruser-user-block' + (options.unclaimed ? ' poweruser-user-block--unclaimed' : '');
+    var nameLine = document.createElement('div');
+    nameLine.className = 'poweruser-user-name-line';
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'poweruser-user-name' + (options.unclaimed ? ' poweruser-user-name--unclaimed' : '');
+    nameSpan.textContent = userName;
+    nameLine.appendChild(nameSpan);
+    if (userTip > 0) {
+      var tipSpan = document.createElement('span');
+      tipSpan.className = 'poweruser-user-with-tip';
+      tipSpan.textContent = 'With tip: €' + userTotalWithTip.toFixed(2);
+      nameLine.appendChild(tipSpan);
+    }
+    var totalSpan = document.createElement('span');
+    totalSpan.className = 'poweruser-user-total';
+    totalSpan.textContent = '€' + userTotal.toFixed(2);
+    nameLine.appendChild(totalSpan);
+    userBlock.appendChild(nameLine);
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      var itemRow = document.createElement('div');
+      itemRow.className = 'poweruser-user-item';
+      var itemLeft = document.createElement('span');
+      itemLeft.className = 'poweruser-user-item-desc';
+      itemLeft.textContent = it.description + ' @ ' + formatNum(it.unitPrice);
+      var itemRight = document.createElement('span');
+      itemRight.className = 'poweruser-user-item-price';
+      itemRight.textContent = '€' + it.totalPrice.toFixed(2);
+      itemRow.appendChild(itemLeft);
+      itemRow.appendChild(itemRight);
+      userBlock.appendChild(itemRow);
+    }
+    viewPanel.appendChild(userBlock);
+  }
+
   function renderBillReview() {
     var listContainer = document.getElementById('poweruser-review-list');
     if (!listContainer) return;
@@ -981,46 +1369,11 @@
             var byUser = buildByUserView(fullBill);
             var users = Object.keys(byUser).sort();
             for (var u = 0; u < users.length; u++) {
-              var userName = users[u];
-              var items = byUser[userName];
-              var userTotal = items.reduce(function (s, it) { return s + (it.totalPrice || 0); }, 0);
-              var userShare = billTotal > 0 ? userTotal / billTotal : 0;
-              var userTip = tipAmount * userShare;
-              var userTotalWithTip = userTotal + userTip;
-              var userBlock = document.createElement('div');
-              userBlock.className = 'poweruser-user-block';
-              var nameLine = document.createElement('div');
-              nameLine.className = 'poweruser-user-name-line';
-              var nameSpan = document.createElement('span');
-              nameSpan.className = 'poweruser-user-name';
-              nameSpan.textContent = userName;
-              nameLine.appendChild(nameSpan);
-              if (userTip > 0) {
-                var tipSpan = document.createElement('span');
-                tipSpan.className = 'poweruser-user-with-tip';
-                tipSpan.textContent = 'With tip: €' + userTotalWithTip.toFixed(2);
-                nameLine.appendChild(tipSpan);
-              }
-              var totalSpan = document.createElement('span');
-              totalSpan.className = 'poweruser-user-total';
-              totalSpan.textContent = '€' + userTotal.toFixed(2);
-              nameLine.appendChild(totalSpan);
-              userBlock.appendChild(nameLine);
-              for (var k = 0; k < items.length; k++) {
-                var it = items[k];
-                var itemRow = document.createElement('div');
-                itemRow.className = 'poweruser-user-item';
-                var itemLeft = document.createElement('span');
-                itemLeft.className = 'poweruser-user-item-desc';
-                itemLeft.textContent = it.description + ' @ ' + formatNum(it.unitPrice);
-                var itemRight = document.createElement('span');
-                itemRight.className = 'poweruser-user-item-price';
-                itemRight.textContent = '€' + it.totalPrice.toFixed(2);
-                itemRow.appendChild(itemLeft);
-                itemRow.appendChild(itemRight);
-                userBlock.appendChild(itemRow);
-              }
-              viewPanel.appendChild(userBlock);
+              appendUserBlock(viewPanel, users[u], byUser[users[u]], billTotal, tipAmount);
+            }
+            var unclaimedView = buildUnclaimedView(fullBill);
+            if (unclaimedView) {
+              appendUserBlock(viewPanel, 'Unclaimed', unclaimedView.items, billTotal, tipAmount, { unclaimed: true });
             }
             var byUserSummary = document.createElement('div');
             byUserSummary.className = 'poweruser-bill-summary';
@@ -1861,7 +2214,27 @@
   var PowerUserPage = {
     init: function (el) {
       rootEl = el;
+      var urlSection = getSectionFromUrl();
+      var returnState = readReturnState();
+      pageState.section = urlSection || (returnState && returnState.section) || 'bills';
       renderShell();
+      if (pageState.section !== 'bills') {
+        switchSection(pageState.section);
+      } else {
+        syncSectionUrl(pageState.section);
+      }
+
+      if (typeof window !== 'undefined') {
+        window.addEventListener('pageshow', function (e) {
+          if (!e.persisted) return;
+          var section = getSectionFromUrl() || pageState.section;
+          if (section !== pageState.section) {
+            switchSection(section);
+          } else if (section === 'transactions') {
+            restoreTransactionsView(document.getElementById('poweruser-transactions-mount'));
+          }
+        });
+      }
     }
   };
   global.PowerUserPage = PowerUserPage;
