@@ -888,6 +888,26 @@ function billStartDateFromAsOf(asOfDate: string): string {
   return formatDate(d) as string;
 }
 
+/** Normalise to YYYY-MM-DD for reliable lexicographic date ordering. */
+function normalizeIsoDate(v: unknown): string {
+  return formatDate(v) || String(v || "");
+}
+
+function compareStatementEventsDesc(
+  a: { date: string; type: string },
+  b: { date: string; type: string },
+): number {
+  const da = normalizeIsoDate(a.date);
+  const db = normalizeIsoDate(b.date);
+  if (da !== db) return db.localeCompare(da);
+  const typeOrder: Record<string, number> = {
+    payment: 0,
+    bill: 1,
+    opening: 2,
+  };
+  return (typeOrder[a.type] ?? 9) - (typeOrder[b.type] ?? 9);
+}
+
 function buildFinancialLedger(
   bills: FinBill[],
   payments: FinPayment[],
@@ -1314,9 +1334,11 @@ async function getUserStatement(
     amount: number | null;
     billDate: string | null;
     balanceAfter: number;
+    foodItems?: string;
   }> = [];
 
   const dateSet = new Set<string>();
+  dateSet.add(opening.asOfDate);
   for (const b of settled) dateSet.add(b.date);
   for (const p of payments) {
     if (resolveFinancialName(p.userName, financialNames) === canon) {
@@ -1326,24 +1348,33 @@ async function getUserStatement(
   const dates = Array.from(dateSet).sort();
 
   let balance = roundMoney(openingBalance);
+
   for (const date of dates) {
     const bill = settled.find((b) => b.date === date);
     if (bill) {
       const analysis = analyzeBillForFinancial(bill);
+      const snapshots = ledger.billSnapshots[bill.date] || {};
+      const snap = snapshots[canon];
       const share = analysis.userRows[canon] ||
         Object.entries(analysis.userRows).find(([n]) =>
           resolveFinancialName(n, financialNames) === canon
         )?.[1];
-      const due = share ? share.dueWithTip : 0;
+      const due = snap ? snap.dueWithTip : (share ? share.dueWithTip : 0);
       if (due > 0) {
+        const claimedItems = snap
+          ? [snap.food.items, snap.extras.items, snap.drinks.items]
+            .filter((s) => String(s || "").trim() !== "")
+            .join(", ")
+          : "";
         balance = roundMoney(balance + due);
         events.push({
-          date,
+          date: normalizeIsoDate(date),
           type: "bill",
           description: "Bill",
           amount: due,
           billDate: date,
           balanceAfter: balance,
+          foodItems: claimedItems,
         });
       }
     }
@@ -1351,7 +1382,7 @@ async function getUserStatement(
     for (const p of dayPayments) {
       balance = roundMoney(balance - p.amount);
       events.push({
-        date,
+        date: normalizeIsoDate(date),
         type: "payment",
         description: "Payment",
         amount: -p.amount,
@@ -1362,7 +1393,7 @@ async function getUserStatement(
   }
 
   events.push({
-    date: opening.asOfDate,
+    date: normalizeIsoDate(opening.asOfDate),
     type: "opening",
     description: "Opening balance",
     amount: null,
@@ -1370,7 +1401,8 @@ async function getUserStatement(
     balanceAfter: roundMoney(openingBalance),
   });
 
-  events.reverse();
+  events.sort(compareStatementEventsDesc);
+
   return {
     userName: canon,
     currentBalance: roundMoney(ledger.balances[canon] || 0),

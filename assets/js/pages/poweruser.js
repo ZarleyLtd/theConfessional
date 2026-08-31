@@ -481,216 +481,25 @@
     return y + '-' + m + '-' + day;
   }
 
-  function formatMoneyOptional(val) {
-    if (val == null || val === '') return '';
-    return formatMoney(val);
-  }
-
-  /** Largest |owed| among data rows (for traffic-light scaling). */
-  function getMaxAbsOwed(rows) {
-    var max = 0;
-    for (var i = 0; i < rows.length; i++) {
-      var owed = rows[i].owed;
-      if (owed == null || owed === '') continue;
-      var n = parseFloat(owed);
-      if (!isNaN(n)) max = Math.max(max, Math.abs(n));
-    }
-    return max;
-  }
-
-  /** Traffic-light class for Owed cell: negative green, zero neutral, positive red. */
-  function getOwedTrafficClass(owed, maxAbsOwed) {
-    if (owed == null || owed === '') return '';
-    var n = parseFloat(owed);
-    if (isNaN(n) || maxAbsOwed <= 0 || Math.abs(n) < 0.005) {
-      return ' financial-table__amt--owed-neutral';
-    }
-    var ratio = Math.min(1, Math.abs(n) / maxAbsOwed);
-    var level = ratio > 0.66 ? '3' : (ratio > 0.33 ? '2' : '1');
-    if (n < 0) return ' financial-table__amt--owed-credit-' + level;
-    return ' financial-table__amt--owed-debit-' + level;
-  }
-
-  function shareFinancialOverviewImage(btn, billDate) {
-    if (typeof html2canvas !== 'function') {
-      alert('Image capture is not available. Check your network connection and reload.');
-      return;
-    }
-    var overview = document.querySelector('.financial-overview');
-    if (!overview || !btn) return;
-
-    var shareBtn = btn;
-    var tableWrap = overview.querySelector('.financial-table-wrap');
-    var label = shareBtn.textContent;
-    shareBtn.disabled = true;
-    shareBtn.textContent = 'Creating image…';
-
-    var prevWrapOverflow = tableWrap ? tableWrap.style.overflow : '';
-    var prevWrapWidth = tableWrap ? tableWrap.style.width : '';
-    var prevOverviewWidth = overview.style.width;
-    var prevOverviewMaxWidth = overview.style.maxWidth;
-    var prevBtnDisplay = shareBtn.style.display;
-
-    if (tableWrap) {
-      tableWrap.style.overflow = 'visible';
-      tableWrap.style.width = tableWrap.scrollWidth + 'px';
-    }
-    overview.style.width = overview.scrollWidth + 'px';
-    overview.style.maxWidth = 'none';
-    shareBtn.style.display = 'none';
-
-    html2canvas(overview, {
-      scale: 2,
-      backgroundColor: '#0f172a',
-      logging: false,
-      useCORS: true
-    })
-      .then(function (canvas) {
-        return new Promise(function (resolve, reject) {
-          canvas.toBlob(function (blob) {
-            if (!blob) {
-              reject(new Error('Could not create image'));
-              return;
-            }
-            resolve(blob);
-          }, 'image/png');
-        });
-      })
-      .then(function (blob) {
-        var filename = 'financial-' + (billDate || 'overview') + '.png';
-        var file = new File([blob], filename, { type: 'image/png' });
-        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-          return navigator.share({ files: [file], title: 'Financial overview' });
-        }
-        var url = URL.createObjectURL(blob);
-        var link = document.createElement('a');
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-      })
-      .catch(function (err) {
-        if (err && err.name === 'AbortError') return;
-        alert(err && err.message ? err.message : 'Failed to create image');
-      })
-      .finally(function () {
-        if (tableWrap) {
-          tableWrap.style.overflow = prevWrapOverflow;
-          tableWrap.style.width = prevWrapWidth;
-        }
-        overview.style.width = prevOverviewWidth;
-        overview.style.maxWidth = prevOverviewMaxWidth;
-        shareBtn.style.display = prevBtnDisplay;
-        shareBtn.disabled = false;
-        shareBtn.textContent = label;
-      });
-  }
-
   function renderFinancialOverview() {
     var mount = document.getElementById('poweruser-financial-mount');
     if (!mount) return;
-    mount.innerHTML = '<p class="poweruser-loading">Loading financial overview…</p>';
-    if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getFinancialOverview) {
-      mount.innerHTML = '<p class="poweruser-error">Financial API not available.</p>';
+    if (typeof FinancialOverview === 'undefined') {
+      mount.innerHTML = '<p class="poweruser-error">Financial overview component not loaded.</p>';
       return;
     }
-    ClaimsAPI.getFinancialOverview(pageState.financialBillDate)
-      .then(function (data) {
-        if (!data || !data.billDate) {
-          mount.innerHTML = '<p class="poweruser-placeholder">No settled bills yet. Upload and close a bill to see the financial overview.</p>';
-          return;
-        }
-        pageState.financialBillDate = data.billDate;
-        var dateLabel = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
-          ? ClaimsFormatters.formatBillDateDisplay(data.billDate) : data.billDate;
-        var shareLabel = (typeof navigator !== 'undefined' && navigator.share) ? 'Share image' : 'Save image';
-        var canGoPrev = !!data.prevBillDate;
-        var canGoNext = !!data.nextBillDate && data.isLatest !== true;
-        var html = '<div class="financial-overview" data-bill-date="' + escapeHtml(data.billDate) + '">';
-        html += '<div class="financial-overview__header">';
-        html += '<h2 class="financial-overview__title">Classic View · ' + escapeHtml(dateLabel) + '</h2>';
-        html += '<div class="financial-overview__header-actions">';
-        html += '<button type="button" class="financial-overview__share-btn" id="financial-overview-share-btn">' + shareLabel + '</button>';
-        html += '<div class="financial-overview__nav">';
-        html += '<button type="button" class="financial-overview__nav-btn" id="financial-overview-prev-btn" title="Previous bill"' + (canGoPrev ? '' : ' disabled') + ' aria-label="Previous bill">';
-        html += '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>';
-        html += '</button>';
-        html += '<button type="button" class="financial-overview__nav-btn" id="financial-overview-next-btn" title="Next bill"' + (canGoNext ? '' : ' disabled') + ' aria-label="Next bill">';
-        html += '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>';
-        html += '</button>';
-        html += '</div></div></div>';
-        html += '<div class="financial-table-wrap"><table class="financial-table">';
-        html += '<thead><tr>';
-        html += '<th class="financial-table__name">Name</th>';
-        html += '<th colspan="2">Food</th><th colspan="2">Extras</th><th colspan="2">Drinks</th>';
-        html += '<th>Total</th><th>Due (incl tip)</th><th>c/f</th><th>Paid</th><th>Owed</th>';
-        html += '</tr></thead><tbody>';
-        var rows = data.rows || [];
-        var maxAbsOwed = getMaxAbsOwed(rows);
-        for (var i = 0; i < rows.length; i++) {
-          var row = rows[i];
-          var rowClass = row.guestRow ? ' financial-table__row--guest' : '';
-          var owedClass = 'financial-table__amt financial-table__amt--owed' + getOwedTrafficClass(row.owed, maxAbsOwed);
-          html += '<tr class="financial-table__row' + rowClass + '">';
-          html += '<td class="financial-table__name">' + escapeHtml(row.userName) + '</td>';
-          html += '<td class="financial-table__items">' + escapeHtml(row.food.items || '') + '</td>';
-          html += '<td class="financial-table__amt">' + (row.food.amount ? formatMoney(row.food.amount) : '') + '</td>';
-          html += '<td class="financial-table__items">' + escapeHtml(row.extras.items || '') + '</td>';
-          html += '<td class="financial-table__amt">' + (row.extras.amount ? formatMoney(row.extras.amount) : '') + '</td>';
-          html += '<td class="financial-table__items">' + escapeHtml(row.drinks.items || '') + '</td>';
-          html += '<td class="financial-table__amt">' + (row.drinks.amount ? formatMoney(row.drinks.amount) : '') + '</td>';
-          html += '<td class="financial-table__amt">' + (row.total ? formatMoney(row.total) : '') + '</td>';
-          html += '<td class="financial-table__amt">' + (row.dueWithTip ? formatMoney(row.dueWithTip) : '') + '</td>';
-          html += '<td class="financial-table__amt">' + formatMoneyOptional(row.carryForward) + '</td>';
-          html += '<td class="financial-table__amt">' + (row.paid ? formatMoney(row.paid) : '') + '</td>';
-          html += '<td class="' + owedClass + '">' + formatMoneyOptional(row.owed) + '</td>';
-          html += '</tr>';
-        }
-        var footer = data.footer || {};
-        html += '<tr class="financial-table__footer">';
-        html += '<td></td>';
-        html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.foodTotal) + '</td>';
-        html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.extrasTotal) + '</td>';
-        html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.drinksTotal) + '</td>';
-        html += '<td class="financial-table__amt">' + formatMoney(footer.billTotal) + '</td>';
-        html += '<td class="financial-table__amt">' + formatMoney(footer.totalDueWithTip) + '</td>';
-        html += '<td class="financial-table__amt">' + formatMoney(footer.carryForwardTotal) + '</td>';
-        html += '<td class="financial-table__amt">' + formatMoney(footer.paidTotal) + '</td>';
-        html += '<td class="financial-table__amt">' + formatMoney(footer.owedTotal) + '</td>';
-        html += '</tr>';
-        html += '</tbody></table></div>';
-        html += '<div class="financial-overview__meta">';
-        html += '<p><span class="financial-overview__meta-label">Paid by JP</span> ' + formatMoney(footer.paidByJP) + '</p>';
-        html += '<p><span class="financial-overview__meta-label">Tip rate</span> ' + (footer.tipRate != null ? (footer.tipRate * 100).toFixed(2) + '%' : '—') + '</p>';
-        html += '<p><span class="financial-overview__meta-label">Tip amount</span> ' + formatMoney(footer.tipAmount) + '</p>';
-        html += '</div></div>';
-        mount.innerHTML = html;
-        var shareBtn = document.getElementById('financial-overview-share-btn');
-        if (shareBtn) {
-          shareBtn.addEventListener('click', function () {
-            shareFinancialOverviewImage(shareBtn, data.billDate);
-          });
-        }
-        var prevBtn = document.getElementById('financial-overview-prev-btn');
-        if (prevBtn && data.prevBillDate) {
-          prevBtn.addEventListener('click', function () {
-            pageState.financialBillDate = data.prevBillDate;
-            renderFinancialOverview();
-          });
-        }
-        var nextBtn = document.getElementById('financial-overview-next-btn');
-        if (nextBtn && data.nextBillDate && data.isLatest !== true) {
-          nextBtn.addEventListener('click', function () {
-            pageState.financialBillDate = data.nextBillDate;
-            renderFinancialOverview();
-          });
-        }
-      })
-      .catch(function (err) {
-        mount.innerHTML = '<p class="poweruser-error">' + escapeHtml(err.message || 'Failed to load financial overview') + '</p>';
-      });
+    FinancialOverview.renderInto(mount, {
+      billDate: pageState.financialBillDate,
+      showShare: true,
+      emptyClass: 'poweruser-placeholder',
+      emptyMessage: 'No settled bills yet. Upload and close a bill to see the financial overview.',
+      onBillDateChange: function (date) {
+        pageState.financialBillDate = date;
+        renderFinancialOverview();
+      }
+    }).then(function (data) {
+      if (data && data.billDate) pageState.financialBillDate = data.billDate;
+    });
   }
 
   function renderRecordPayment() {

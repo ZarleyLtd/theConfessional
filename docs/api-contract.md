@@ -25,7 +25,7 @@ This contract is implemented by `supabase/functions/theconfessional-api/index.ts
 - GET `action=getFinancialOverview` -> `{ billDate, rows[], footer, balances[] }`
 - GET `action=getUserBalanceInfo` -> `{ users: [{ userName, balance, latestBillDue, latestBillDate }] }`
 - GET `action=getAllTransactions` -> `{ transactions: [{ date, type: 'opening'|'bill'|'payment', description, amount, billDate, userName }] }` — description format: `{Name} - Opening balance|Bill|Payment`
-- GET `action=getUserStatement&userName=X` -> `{ userName, currentBalance, transactions[] }`
+- GET `action=getUserStatement&userName=X` -> `{ userName, currentBalance, transactions[] }` — bill transactions include optional `foodItems` (comma-separated claimed items)
 - POST `action=recordPayment` payload `{ userName, paymentDate, amount }` -> `{ ok: true, paymentDate, userName, amount }`
 
 Payments table: `payment_date`, `user_name`, `amount`

@@ -7,6 +7,9 @@
 
   var state = {
     screen: 'home',       // 'home' | 'products' | 'statement'
+    statementViewMode: 'list', // 'list' | 'classic'
+    statementFinancialBillDate: null,
+    statementData: null,
     isReviewMode: false,  // true when user selected from Historical bills
     enabledDates: [],
     enabledDatesFetchedAt: null,
@@ -134,10 +137,13 @@
     html += '<h1 class="claims-hero__title">The Confessional</h1>';
     html += '</div>';
     html += '<div class="claims-initial-content">';
+    html += '<div class="claims-name-row">';
     html += '<div id="claims-modal-name-mount"></div>';
+    html += '<button type="button" class="claims-statement-icon-btn" id="claims-statement-btn" title="Financial statement" aria-label="Financial statement"><span aria-hidden="true">📊</span></button>';
+    html += '</div>';
     html += '<h2 class="claims-modal__heading">Open for claims</h2>';
     html += '<div id="claims-modal-open-bills"></div>';
-    html += '<h2 class="claims-modal__heading">Historical bills</h2>';
+    html += '<h2 class="claims-modal__heading">Older bills</h2>';
     html += '<div id="claims-modal-historical-bills"></div>';
     html += '</div></div>';
     rootEl.innerHTML = html;
@@ -150,6 +156,10 @@
         state.configNames = names;
       }
     });
+    var statementBtn = document.getElementById('claims-statement-btn');
+    if (statementBtn) {
+      statementBtn.addEventListener('click', goToStatement);
+    }
     renderBillList('claims-modal-open-bills', split.open, false, function (date) {
       state.selectedDate = date;
       state.isReviewMode = false;
@@ -374,9 +384,6 @@
     if (!state.isReviewMode) {
       html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn"><span class="claims-submit-btn__text">Submit my claims</span><span class="claims-submit-btn__progress-wrap"><span class="claims-submit-btn__progress"></span></span></button>';
     }
-    if (state.userName) {
-      html += '<button type="button" class="claims-statement-btn" id="claims-statement-btn">My financial statement</button>';
-    }
     html += '</div></div></div>';
     html += '<button type="button" class="claims-back-to-top hidden" id="claims-back-to-top" aria-label="Back to top"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>';
     rootEl.innerHTML = html;
@@ -390,10 +397,6 @@
     }
     if (!state.isReviewMode) {
       document.getElementById('claims-submit-btn').addEventListener('click', onSubmit);
-    }
-    var statementBtn = document.getElementById('claims-statement-btn');
-    if (statementBtn) {
-      statementBtn.addEventListener('click', goToStatement);
     }
     var backToTopBtn = document.getElementById('claims-back-to-top');
     if (backToTopBtn) {
@@ -776,11 +779,17 @@
       alert('Please enter your name first.');
       return;
     }
+    state.statementViewMode = 'list';
+    state.statementFinancialBillDate = null;
+    state.statementData = null;
     state.screen = 'statement';
     renderShell();
   }
 
   function goBackFromStatement() {
+    state.statementViewMode = 'list';
+    state.statementFinancialBillDate = null;
+    state.statementData = null;
     if (state.selectedDate) {
       state.screen = 'products';
     } else {
@@ -789,12 +798,10 @@
     renderShell();
   }
 
-  function openBillFromStatement(billDate) {
-    if (!billDate) return;
-    state.selectedDate = billDate;
-    state.isReviewMode = true;
-    state.screen = 'products';
-    onBillSelectedContinue();
+  function escapeStatementHtml(str) {
+    if (str == null) return '';
+    var s = String(str);
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   function renderStatementView() {
@@ -806,12 +813,33 @@
     html += '</div>';
     html += '<div class="claims-products-wrap">';
     html += '<div class="statement-view">';
+    html += '<div class="statement-view__header">';
     html += '<h2 class="statement-view__title">Financial statement</h2>';
-    html += '<p class="statement-view__user">Account: <strong>' + (state.userName || '') + '</strong></p>';
+    html += '<div class="statement-view__mode" role="group" aria-label="Statement view">';
+    html += '<button type="button" class="statement-view__mode-btn' + (state.statementViewMode === 'list' ? ' statement-view__mode-btn--active' : '') + '" id="statement-view-mode-list" aria-pressed="' + (state.statementViewMode === 'list' ? 'true' : 'false') + '">List</button>';
+    html += '<button type="button" class="statement-view__mode-btn' + (state.statementViewMode === 'classic' ? ' statement-view__mode-btn--active' : '') + '" id="statement-view-mode-classic" aria-pressed="' + (state.statementViewMode === 'classic' ? 'true' : 'false') + '">Classic</button>';
+    html += '</div></div>';
+    html += '<p class="statement-view__user">Account: <strong>' + escapeStatementHtml(state.userName || '') + '</strong></p>';
     html += '<div id="statement-mount"><p class="statement-view__loading">Loading…</p></div>';
     html += '</div></div>';
     rootEl.innerHTML = html;
     document.getElementById('claims-statement-back-btn').addEventListener('click', goBackFromStatement);
+    document.getElementById('statement-view-mode-list').addEventListener('click', function () {
+      setStatementViewMode('list');
+    });
+    document.getElementById('statement-view-mode-classic').addEventListener('click', function () {
+      setStatementViewMode('classic');
+    });
+
+    if (state.statementViewMode === 'classic') {
+      renderStatementClassicView(document.getElementById('statement-mount'));
+      return;
+    }
+
+    if (state.statementData) {
+      renderStatementListView(document.getElementById('statement-mount'), state.statementData);
+      return;
+    }
 
     if (typeof ClaimsAPI === 'undefined' || !ClaimsAPI.getUserStatement) {
       document.getElementById('statement-mount').innerHTML = '<p class="statement-view__error">Statement not available.</p>';
@@ -819,11 +847,98 @@
     }
     ClaimsAPI.getUserStatement(state.userName)
       .then(function (data) {
-        renderStatementContent(document.getElementById('statement-mount'), data);
+        if (data && data.transactions) {
+          data.transactions = sortStatementTransactions(data.transactions);
+        }
+        state.statementData = data;
+        renderStatementListView(document.getElementById('statement-mount'), data);
       })
       .catch(function (err) {
-        document.getElementById('statement-mount').innerHTML = '<p class="statement-view__error">' + (err.message || 'Failed to load statement') + '</p>';
+        document.getElementById('statement-mount').innerHTML = '<p class="statement-view__error">' + escapeStatementHtml(err.message || 'Failed to load statement') + '</p>';
       });
+  }
+
+  function updateStatementModeButtons() {
+    var listBtn = document.getElementById('statement-view-mode-list');
+    var classicBtn = document.getElementById('statement-view-mode-classic');
+    if (listBtn) {
+      listBtn.classList.toggle('statement-view__mode-btn--active', state.statementViewMode === 'list');
+      listBtn.setAttribute('aria-pressed', state.statementViewMode === 'list' ? 'true' : 'false');
+    }
+    if (classicBtn) {
+      classicBtn.classList.toggle('statement-view__mode-btn--active', state.statementViewMode === 'classic');
+      classicBtn.setAttribute('aria-pressed', state.statementViewMode === 'classic' ? 'true' : 'false');
+    }
+  }
+
+  function setStatementViewMode(mode) {
+    if (state.statementViewMode === mode) return;
+    state.statementViewMode = mode;
+    updateStatementModeButtons();
+    var mount = document.getElementById('statement-mount');
+    if (!mount) return;
+    if (mode === 'classic') {
+      renderStatementClassicView(mount);
+    } else if (state.statementData) {
+      renderStatementListView(mount, state.statementData);
+    } else {
+      mount.innerHTML = '<p class="statement-view__loading">Loading…</p>';
+      ClaimsAPI.getUserStatement(state.userName)
+        .then(function (data) {
+          if (data && data.transactions) {
+            data.transactions = sortStatementTransactions(data.transactions);
+          }
+          state.statementData = data;
+          renderStatementListView(mount, data);
+        })
+        .catch(function (err) {
+          mount.innerHTML = '<p class="statement-view__error">' + escapeStatementHtml(err.message || 'Failed to load statement') + '</p>';
+        });
+    }
+  }
+
+  function renderStatementClassicView(mount) {
+    if (!mount) return;
+    if (typeof FinancialOverview === 'undefined') {
+      mount.innerHTML = '<p class="statement-view__error">Classic view not available.</p>';
+      return;
+    }
+    FinancialOverview.renderInto(mount, {
+      billDate: state.statementFinancialBillDate,
+      showShare: false,
+      highlightUserName: state.userName,
+      loadingClass: 'statement-view__loading',
+      emptyClass: 'statement-view__empty',
+      errorClass: 'statement-view__error',
+      onBillDateChange: function (date) {
+        state.statementFinancialBillDate = date;
+        renderStatementClassicView(mount);
+      }
+    }).then(function (data) {
+      if (data && data.billDate) state.statementFinancialBillDate = data.billDate;
+    });
+  }
+
+  function normalizeStatementDate(dateStr) {
+    if (!dateStr) return '';
+    var s = String(dateStr);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    var d = new Date(s);
+    if (isNaN(d.getTime())) return s;
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function sortStatementTransactions(txns) {
+    var typeOrder = { payment: 0, bill: 1, opening: 2 };
+    return (txns || []).slice().sort(function (a, b) {
+      var da = normalizeStatementDate(a.date);
+      var db = normalizeStatementDate(b.date);
+      if (da !== db) return db.localeCompare(da);
+      return (typeOrder[a.type] != null ? typeOrder[a.type] : 9) - (typeOrder[b.type] != null ? typeOrder[b.type] : 9);
+    });
   }
 
   function formatStatementMoney(val) {
@@ -835,50 +950,76 @@
     return n < 0 ? ('-' + formatted) : formatted;
   }
 
-  function renderStatementContent(mount, data) {
+  function getStatementTypeLabel(type) {
+    if (type === 'bill') return 'Bill';
+    if (type === 'payment') return 'Payment';
+    if (type === 'opening') return 'Opening';
+    return type || '';
+  }
+
+  function renderStatementListView(mount, data) {
     if (!mount) return;
     var balance = data.currentBalance != null ? parseFloat(data.currentBalance) : 0;
-    var balanceLabel = balance > 0 ? 'Owed' : (balance < 0 ? 'Due to you' : 'Balanced');
-    var html = '<p class="statement-view__balance">' + balanceLabel + ': <strong>' + formatStatementMoney(balance) + '</strong></p>';
-    var txns = data.transactions || [];
+    var html = '';
+    if (balance < 0) {
+      html += '<p class="statement-view__balance statement-view__balance--credit">In Credit: <strong>' + formatStatementMoney(Math.abs(balance)) + '</strong></p>';
+    } else if (balance > 0) {
+      html += '<p class="statement-view__balance statement-view__balance--owed">Owed: <strong>' + formatStatementMoney(balance) + '</strong></p>';
+    } else {
+      html += '<p class="statement-view__balance">Owed: <strong>' + formatStatementMoney(0) + '</strong></p>';
+    }
+
+    var txns = sortStatementTransactions(data.transactions || []);
     if (txns.length === 0) {
       html += '<p class="statement-view__empty">No transactions yet.</p>';
       mount.innerHTML = html;
       return;
     }
-    html += '<ul class="statement-list">';
+
+    html += '<div class="statement-table-wrap"><table class="statement-table">';
+    html += '<thead><tr>';
+    html += '<th class="statement-table__date">Date</th>';
+    html += '<th class="statement-table__type">Category</th>';
+    html += '<th class="statement-table__amt">Amount</th>';
+    html += '<th class="statement-table__balance">Balance</th>';
+    html += '</tr></thead><tbody>';
+
     for (var i = 0; i < txns.length; i++) {
       var t = txns[i];
       var dateLabel = typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
         ? ClaimsFormatters.formatBillDateDisplay(t.date) : t.date;
       var isBill = t.type === 'bill';
       var isOpening = t.type === 'opening';
-      var amountClass = isBill ? 'statement-list__amount--debit' : (isOpening ? 'statement-list__amount--opening' : 'statement-list__amount--credit');
-      html += '<li class="statement-list__item">';
-      html += '<div class="statement-list__main">';
-      html += '<span class="statement-list__date">' + dateLabel + '</span>';
-      html += '<span class="statement-list__desc">' + (t.description || (isBill ? 'Bill' : (isOpening ? 'Opening balance' : 'Payment'))) + '</span>';
-      if (!isOpening && t.amount != null) {
-        html += '<span class="statement-list__amount ' + amountClass + '">' + formatStatementMoney(t.amount) + '</span>';
-      } else if (isOpening) {
-        html += '<span class="statement-list__amount ' + amountClass + '">' + formatStatementMoney(t.balanceAfter) + '</span>';
-      }
-      html += '</div>';
-      html += '<div class="statement-list__balance">Balance: ' + formatStatementMoney(t.balanceAfter) + '</div>';
-      if (isBill && t.billDate) {
-        html += '<button type="button" class="statement-list__bill-link" data-date="' + t.billDate + '">View claims for this bill</button>';
-      }
-      html += '</li>';
-    }
-    html += '</ul>';
-    mount.innerHTML = html;
+      var isPayment = t.type === 'payment';
+      var rowClass = 'statement-table__row';
+      if (isBill) rowClass += ' statement-table__row--bill';
+      else if (isPayment) rowClass += ' statement-table__row--payment';
+      else if (isOpening) rowClass += ' statement-table__row--opening';
 
-    var billLinks = mount.querySelectorAll('.statement-list__bill-link');
-    for (var bl = 0; bl < billLinks.length; bl++) {
-      billLinks[bl].addEventListener('click', function () {
-        openBillFromStatement(this.getAttribute('data-date'));
-      });
+      var amountClass = 'statement-table__amt';
+      if (isBill) amountClass += ' statement-table__amt--debit';
+      else if (isPayment) amountClass += ' statement-table__amt--credit';
+      else if (isOpening) amountClass += ' statement-table__amt--opening';
+
+      var displayAmount = '';
+      if (isOpening) {
+        displayAmount = formatStatementMoney(t.balanceAfter);
+      } else if (isPayment && t.amount != null) {
+        displayAmount = formatStatementMoney(Math.abs(parseFloat(t.amount)));
+      } else if (t.amount != null) {
+        displayAmount = formatStatementMoney(t.amount);
+      }
+
+      html += '<tr class="' + rowClass + '">';
+      html += '<td class="statement-table__date">' + escapeStatementHtml(dateLabel) + '</td>';
+      html += '<td class="statement-table__type">' + escapeStatementHtml(getStatementTypeLabel(t.type)) + '</td>';
+      html += '<td class="' + amountClass + '">' + displayAmount + '</td>';
+      html += '<td class="statement-table__balance">' + formatStatementMoney(t.balanceAfter) + '</td>';
+      html += '</tr>';
     }
+
+    html += '</tbody></table></div>';
+    mount.innerHTML = html;
   }
 
   function parseInitialDeepLink() {
