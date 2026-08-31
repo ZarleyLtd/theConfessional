@@ -908,6 +908,22 @@ function compareStatementEventsDesc(
   return (typeOrder[a.type] ?? 9) - (typeOrder[b.type] ?? 9);
 }
 
+/** Settled bill that owns a payment: next bill on/after payment date, else latest bill. */
+function findBillDateForPayment(
+  paymentDate: string,
+  settledBillDates: string[],
+): string | null {
+  const payDate = normalizeIsoDate(paymentDate);
+  for (let i = 0; i < settledBillDates.length; i++) {
+    if (settledBillDates[i].localeCompare(payDate) >= 0) {
+      return settledBillDates[i];
+    }
+  }
+  return settledBillDates.length
+    ? settledBillDates[settledBillDates.length - 1]
+    : null;
+}
+
 function buildFinancialLedger(
   bills: FinBill[],
   payments: FinPayment[],
@@ -993,11 +1009,6 @@ function buildFinancialLedger(
     for (const p of dayPayments) {
       const name = p.userName;
       balances[name] = roundMoney((balances[name] || 0) - p.amount);
-      if (bill && billSnapshots[bill.date] && billSnapshots[bill.date][name]) {
-        billSnapshots[bill.date][name].paid = roundMoney(
-          billSnapshots[bill.date][name].paid + p.amount,
-        );
-      }
     }
 
     if (bill && billSnapshots[bill.date]) {
@@ -1009,6 +1020,17 @@ function buildFinancialLedger(
         }
       }
     }
+  }
+
+  const settledBillDates = settled.map((b) => b.date);
+  for (const p of payments) {
+    const name = resolveLedgerName(p.userName, financialNames, guestNames);
+    if (!name) continue;
+    const targetBillDate = findBillDateForPayment(p.paymentDate, settledBillDates);
+    if (!targetBillDate || !billSnapshots[targetBillDate]?.[name]) continue;
+    billSnapshots[targetBillDate][name].paid = roundMoney(
+      billSnapshots[targetBillDate][name].paid + p.amount,
+    );
   }
 
   const latestBill = settled.length ? settled[settled.length - 1] : null;
