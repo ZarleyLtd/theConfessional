@@ -908,20 +908,106 @@ function compareStatementEventsDesc(
   return (typeOrder[a.type] ?? 9) - (typeOrder[b.type] ?? 9);
 }
 
-/** Settled bill that owns a payment: next bill on/after payment date, else latest bill. */
-function findBillDateForPayment(
-  paymentDate: string,
-  settledBillDates: string[],
-): string | null {
-  const payDate = normalizeIsoDate(paymentDate);
-  for (let i = 0; i < settledBillDates.length; i++) {
-    if (settledBillDates[i].localeCompare(payDate) >= 0) {
-      return settledBillDates[i];
-    }
+function getOpeningBalanceForUser(
+  opening: OpeningBalancesConfig,
+  userName: string,
+): number {
+  const user = opening.users.find((u) => u.userName === userName);
+  return user ? roundMoney(user.balance) : 0;
+}
+
+function buildClassicOwedByBillDate(
+  billDates: string[],
+  billSnapshots: Record<string, Record<string, UserBillSnapshot>>,
+  opening: OpeningBalancesConfig,
+  payments: FinPayment[],
+  userName: string,
+  financialNames: string[],
+  guestNames: string[],
+): Record<string, number> {
+  const byDate: Record<string, number> = {};
+  let prevOwed = getOpeningBalanceForUser(opening, userName);
+
+  for (let i = 0; i < billDates.length; i++) {
+    const billDate = billDates[i];
+    const nextBillDate = i < billDates.length - 1 ? billDates[i + 1] : null;
+    const snap = billSnapshots[billDate]?.[userName];
+    if (!snap) continue;
+    const paid = sumPaymentsInBillWindow(
+      payments,
+      userName,
+      billDate,
+      nextBillDate,
+      financialNames,
+      guestNames,
+    );
+    const owed = roundMoney(prevOwed + snap.dueWithTip - paid);
+    byDate[billDate] = owed;
+    prevOwed = owed;
   }
-  return settledBillDates.length
-    ? settledBillDates[settledBillDates.length - 1]
-    : null;
+  return byDate;
+}
+
+function getCarryForwardFromPrevBill(
+  prevBillDate: string | null,
+  classicOwedByDate: Record<string, number>,
+  opening: OpeningBalancesConfig,
+  userName: string,
+): number {
+  if (prevBillDate && classicOwedByDate[prevBillDate] != null) {
+    return classicOwedByDate[prevBillDate];
+  }
+  return getOpeningBalanceForUser(opening, userName);
+}
+
+function sumPaymentsInBillWindow(
+  payments: FinPayment[],
+  userName: string,
+  billDate: string,
+  nextBillDate: string | null,
+  financialNames: string[],
+  guestNames: string[],
+): number {
+  let sum = 0;
+  for (const p of payments) {
+    const canon = resolveLedgerName(p.userName, financialNames, guestNames);
+    if (canon !== userName) continue;
+    const payDate = normalizeIsoDate(p.paymentDate);
+    if (payDate.localeCompare(billDate) < 0) continue;
+    if (nextBillDate && payDate.localeCompare(nextBillDate) >= 0) continue;
+    sum = roundMoney(sum + p.amount);
+  }
+  return sum;
+}
+
+function buildClassicViewAmounts(
+  snap: UserBillSnapshot,
+  prevBillDate: string | null,
+  billDate: string,
+  nextBillDate: string | null,
+  classicOwedByDate: Record<string, number>,
+  opening: OpeningBalancesConfig,
+  payments: FinPayment[],
+  userName: string,
+  financialNames: string[],
+  guestNames: string[],
+) {
+  const carryForward = getCarryForwardFromPrevBill(
+    prevBillDate,
+    classicOwedByDate,
+    opening,
+    userName,
+  );
+  const paid = sumPaymentsInBillWindow(
+    payments,
+    userName,
+    billDate,
+    nextBillDate,
+    financialNames,
+    guestNames,
+  );
+  const owed = roundMoney(carryForward + snap.dueWithTip - paid);
+  return { carryForward, paid, owed };
 }
 
 function buildFinancialLedger(
@@ -1020,17 +1106,6 @@ function buildFinancialLedger(
         }
       }
     }
-  }
-
-  const settledBillDates = settled.map((b) => b.date);
-  for (const p of payments) {
-    const name = resolveLedgerName(p.userName, financialNames, guestNames);
-    if (!name) continue;
-    const targetBillDate = findBillDateForPayment(p.paymentDate, settledBillDates);
-    if (!targetBillDate || !billSnapshots[targetBillDate]?.[name]) continue;
-    billSnapshots[targetBillDate][name].paid = roundMoney(
-      billSnapshots[targetBillDate][name].paid + p.amount,
-    );
   }
 
   const latestBill = settled.length ? settled[settled.length - 1] : null;
@@ -1167,17 +1242,47 @@ async function getFinancialOverview(
   const targetBill = bills.find((b) => b.date === targetDate) || latestBill;
   const analysis = analyzeBillForFinancial(targetBill);
   const snapshots = ledger.billSnapshots[targetDate] || {};
+  const financialNames = opening.users.map((u) => u.userName);
+  const emptySnap: UserBillSnapshot = {
+    food: { items: "", amount: 0 },
+    extras: { items: "", amount: 0 },
+    drinks: { items: "", amount: 0 },
+    total: 0,
+    dueWithTip: 0,
+    carryForward: 0,
+    paid: 0,
+    owed: 0,
+  };
+
+  const classicOwedByUser: Record<string, Record<string, number>> = {};
+  const allLedgerNames = [...ledger.orderedNames, ...ledger.guestNames];
+  for (let u = 0; u < allLedgerNames.length; u++) {
+    const ledgerName = allLedgerNames[u];
+    classicOwedByUser[ledgerName] = buildClassicOwedByBillDate(
+      billDates,
+      ledger.billSnapshots,
+      opening,
+      payments,
+      ledgerName,
+      financialNames,
+      ledger.guestNames,
+    );
+  }
+
   const rows = ledger.orderedNames.map((userName) => {
-    const snap = snapshots[userName] || {
-      food: { items: "", amount: 0 },
-      extras: { items: "", amount: 0 },
-      drinks: { items: "", amount: 0 },
-      total: 0,
-      dueWithTip: 0,
-      carryForward: roundMoney(ledger.balances[userName] || 0),
-      paid: 0,
-      owed: roundMoney(ledger.balances[userName] || 0),
-    };
+    const snap = snapshots[userName] || emptySnap;
+    const amounts = buildClassicViewAmounts(
+      snap,
+      prevBillDate,
+      targetDate,
+      nextBillDate,
+      classicOwedByUser[userName] || {},
+      opening,
+      payments,
+      userName,
+      financialNames,
+      ledger.guestNames,
+    );
     return {
       userName,
       food: snap.food,
@@ -1185,17 +1290,29 @@ async function getFinancialOverview(
       drinks: snap.drinks,
       total: snap.total,
       dueWithTip: snap.dueWithTip,
-      carryForward: snap.carryForward,
-      paid: snap.paid,
-      owed: snap.owed,
+      carryForward: amounts.carryForward,
+      paid: amounts.paid,
+      owed: amounts.owed,
     };
   });
 
   for (const guestName of ledger.guestNames) {
     const snap = snapshots[guestName];
     if (!snap) continue;
-    const hasActivity = snap.dueWithTip !== 0 || snap.carryForward !== 0 ||
-      snap.paid !== 0 || snap.owed !== 0;
+    const amounts = buildClassicViewAmounts(
+      snap,
+      prevBillDate,
+      targetDate,
+      nextBillDate,
+      classicOwedByUser[guestName] || {},
+      opening,
+      payments,
+      guestName,
+      financialNames,
+      ledger.guestNames,
+    );
+    const hasActivity = snap.dueWithTip !== 0 || amounts.carryForward !== 0 ||
+      amounts.paid !== 0 || amounts.owed !== 0;
     if (!hasActivity) continue;
     rows.push({
       userName: guestName,
@@ -1204,9 +1321,9 @@ async function getFinancialOverview(
       drinks: snap.drinks,
       total: snap.total,
       dueWithTip: snap.dueWithTip,
-      carryForward: snap.carryForward,
-      paid: snap.paid,
-      owed: snap.owed,
+      carryForward: amounts.carryForward,
+      paid: amounts.paid,
+      owed: amounts.owed,
     });
   }
 
