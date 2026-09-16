@@ -481,6 +481,60 @@
     return y + '-' + m + '-' + day;
   }
 
+  var PAYMENT_BTN_NEUTRAL_BAND = 5;
+  var PAYMENT_BTN_SCALE_MAX = 1.55;
+  var PAYMENT_BTN_PAD_Y = 0.85;
+  var PAYMENT_BTN_PAD_X = 1.15;
+  var PAYMENT_BTN_NAME_REM = 1.0625;
+  var PAYMENT_BTN_BALANCE_REM = 0.8125;
+  var PAYMENT_BTN_BALANCE_DEFAULT = '#94a3b8';
+  var PAYMENT_BTN_GREEN = { r: 34, g: 197, b: 94 };
+  var PAYMENT_BTN_RED = { r: 248, g: 113, b: 113 };
+
+  function parseUserBalance(u) {
+    if (!u || u.balance == null) return NaN;
+    return parseFloat(u.balance);
+  }
+
+  function getPaymentBalancesStats(users) {
+    var maxAbs = 0;
+    var maxPositive = 0;
+    var total = 0;
+    for (var i = 0; i < users.length; i++) {
+      var n = parseUserBalance(users[i]);
+      if (isNaN(n)) continue;
+      total += n;
+      var abs = Math.abs(n);
+      if (abs > maxAbs) maxAbs = abs;
+      if (n > maxPositive) maxPositive = n;
+    }
+    return { maxAbs: maxAbs, maxPositive: maxPositive, total: total };
+  }
+
+  function paymentButtonScale(balance, maxPositive) {
+    if (isNaN(balance) || balance <= PAYMENT_BTN_NEUTRAL_BAND || maxPositive <= PAYMENT_BTN_NEUTRAL_BAND) {
+      return 1;
+    }
+    var ratio = Math.min(1, balance / maxPositive);
+    return 1 + (PAYMENT_BTN_SCALE_MAX - 1) * ratio;
+  }
+
+  function lerpChannel(a, b, t) {
+    return Math.round(a + (b - a) * t);
+  }
+
+  function paymentBalanceColor(balance, maxAbs) {
+    var abs = Math.abs(balance);
+    if (isNaN(abs) || abs <= PAYMENT_BTN_NEUTRAL_BAND || maxAbs <= 0) {
+      return PAYMENT_BTN_BALANCE_DEFAULT;
+    }
+    var t = (Math.max(-1, Math.min(1, balance / maxAbs)) + 1) / 2;
+    var r = lerpChannel(PAYMENT_BTN_GREEN.r, PAYMENT_BTN_RED.r, t);
+    var g = lerpChannel(PAYMENT_BTN_GREEN.g, PAYMENT_BTN_RED.g, t);
+    var b = lerpChannel(PAYMENT_BTN_GREEN.b, PAYMENT_BTN_RED.b, t);
+    return 'rgb(' + r + ', ' + g + ', ' + b + ')';
+  }
+
   function renderFinancialOverview() {
     var mount = document.getElementById('poweruser-financial-mount');
     if (!mount) return;
@@ -525,21 +579,29 @@
     users.sort(function (a, b) {
       return String(a.userName || '').localeCompare(String(b.userName || ''));
     });
+    var stats = getPaymentBalancesStats(users);
     var html = '<div class="payment-record">';
     html += '<h2 class="payment-record__title">Record a payment</h2>';
     html += '<p class="payment-record__hint">Select a name to record a payment.</p>';
     html += '<div class="payment-record__names">';
     for (var i = 0; i < users.length; i++) {
       var u = users[i];
-      var isActive = pageState.paymentSelectedUser === u.userName;
+      var balance = parseUserBalance(u);
+      var scale = paymentButtonScale(balance, stats.maxPositive);
+      var balColor = paymentBalanceColor(balance, stats.maxAbs);
       var guestClass = u.isGuest ? ' payment-record__name-btn--guest' : '';
-      html += '<button type="button" class="payment-record__name-btn' + guestClass + (isActive ? ' payment-record__name-btn--active' : '') + '" data-name="' + escapeHtml(u.userName) + '">';
+      var btnStyle = 'padding:' + (PAYMENT_BTN_PAD_Y * scale).toFixed(3) + 'rem ' +
+        (PAYMENT_BTN_PAD_X * scale).toFixed(3) + 'rem;' +
+        'font-size:' + (PAYMENT_BTN_NAME_REM * scale).toFixed(4) + 'rem;';
+      var balStyle = 'font-size:' + (PAYMENT_BTN_BALANCE_REM * scale).toFixed(4) + 'rem;color:' + balColor + ';';
+      html += '<button type="button" class="payment-record__name-btn' + guestClass + '" data-name="' +
+        escapeHtml(u.userName) + '" style="' + btnStyle + '">';
       html += escapeHtml(u.userName);
-      html += '<span class="payment-record__name-balance">' + formatMoney(u.balance) + '</span>';
+      html += '<span class="payment-record__name-balance" style="' + balStyle + '">' + formatMoney(u.balance) + '</span>';
       html += '</button>';
     }
     html += '</div>';
-    html += '<div id="payment-record-form-mount"></div>';
+    html += '<p class="payment-record__total">Total outstanding: ' + formatMoney(stats.total) + '</p>';
     html += '</div>';
     mount.innerHTML = html;
 
@@ -547,70 +609,116 @@
     for (var nb = 0; nb < nameBtns.length; nb++) {
       nameBtns[nb].addEventListener('click', function () {
         pageState.paymentSelectedUser = this.getAttribute('data-name');
-        renderRecordPaymentContent(mount, data);
-        renderPaymentForm(document.getElementById('payment-record-form-mount'), data);
+        openPaymentRecordModal(data);
       });
-    }
-
-    if (pageState.paymentSelectedUser) {
-      renderPaymentForm(document.getElementById('payment-record-form-mount'), data);
     }
   }
 
-  function renderPaymentForm(formMount, data) {
-    if (!formMount || !pageState.paymentSelectedUser) return;
+  function findPaymentUser(data, userName) {
     var users = (data && data.users) ? data.users : [];
-    var selected = null;
     for (var i = 0; i < users.length; i++) {
-      if (users[i].userName === pageState.paymentSelectedUser) {
-        selected = users[i];
-        break;
-      }
+      if (users[i].userName === userName) return users[i];
     }
+    return null;
+  }
+
+  function closePaymentRecordModal(overlay) {
+    if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+    pageState.paymentSelectedUser = null;
+  }
+
+  function showPaymentRecordedAck(overlay, modal) {
+    modal.innerHTML =
+      '<h3 class="poweruser-modal__title">Payment Recorded</h3>' +
+      '<p class="poweruser-modal__message">The payment has been saved.</p>' +
+      '<div class="poweruser-modal__actions">' +
+      '<button type="button" class="poweruser-modal__ok" id="payment-record-ack-ok">OK</button>' +
+      '</div>';
+    modal.querySelector('#payment-record-ack-ok').addEventListener('click', function () {
+      closePaymentRecordModal(overlay);
+      renderRecordPayment();
+      if (pageState.section === 'financial') renderFinancialOverview();
+      if (pageState.section === 'transactions') renderTransactions();
+    });
+  }
+
+  function openPaymentRecordModal(data) {
+    var selected = findPaymentUser(data, pageState.paymentSelectedUser);
     if (!selected) return;
+
+    var existing = document.querySelector('.poweruser-modal-overlay--payment-record');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+    var overlay = document.createElement('div');
+    overlay.className = 'poweruser-modal-overlay poweruser-modal-overlay--payment-record';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Record payment');
 
     var balance = selected.balance != null ? parseFloat(selected.balance) : 0;
     var prefilled = isNaN(balance) ? '' : Math.abs(balance).toFixed(2);
     var latestBillLabel = selected.latestBillDate && typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatBillDateDisplay
       ? ClaimsFormatters.formatBillDateDisplay(selected.latestBillDate) : (selected.latestBillDate || '—');
+    var latestBillText = formatMoney(selected.latestBillDue) +
+      (selected.latestBillDate ? ' · ' + escapeHtml(latestBillLabel) : '');
 
-    var html = '<form class="payment-record__form" id="payment-record-form">';
-    html += '<h3 class="payment-record__form-title">Payment for ' + escapeHtml(selected.userName) + '</h3>';
-    html += '<label class="payment-record__field"><span class="payment-record__label">Payment date</span>';
-    html += '<input type="date" class="payment-record__input" id="payment-date" value="' + todayIsoDate() + '" required></label>';
-    html += '<p class="payment-record__summary"><span class="payment-record__label">Latest bill amount</span> ';
-    html += formatMoney(selected.latestBillDue) + (selected.latestBillDate ? ' · ' + escapeHtml(latestBillLabel) : '') + '</p>';
-    html += '<p class="payment-record__summary"><span class="payment-record__label">Current balance</span> ';
-    html += '<strong>' + formatMoney(selected.balance) + '</strong></p>';
-    html += '<label class="payment-record__field"><span class="payment-record__label">Amount paid</span>';
-    html += '<input type="number" class="payment-record__input payment-record__input--amount" id="payment-amount" ';
-    html += 'inputmode="decimal" step="0.01" min="0.01" value="' + prefilled + '" required></label>';
-    html += '<button type="submit" class="payment-record__submit" id="payment-submit-btn">Record payment</button>';
-    html += '<p class="payment-record__status" id="payment-status" aria-live="polite"></p>';
-    html += '</form>';
-    formMount.innerHTML = html;
+    var modal = document.createElement('div');
+    modal.className = 'poweruser-modal poweruser-modal--payment-record';
+    modal.innerHTML =
+      '<h3 class="poweruser-modal__title">Payment for ' + escapeHtml(selected.userName) + '</h3>' +
+      '<form class="payment-record__form payment-record__form--modal" id="payment-record-form">' +
+      '<div class="payment-record__row">' +
+      '<label class="payment-record__field payment-record__field--narrow">' +
+      '<span class="payment-record__label">Payment date</span>' +
+      '<input type="date" class="payment-record__input payment-record__input--date" id="payment-date" value="' +
+      todayIsoDate() + '" required></label>' +
+      '<div class="payment-record__field payment-record__field--grow">' +
+      '<span class="payment-record__label">Latest bill amount</span>' +
+      '<span class="payment-record__value">' + latestBillText + '</span></div>' +
+      '</div>' +
+      '<div class="payment-record__row">' +
+      '<div class="payment-record__field payment-record__field--grow">' +
+      '<span class="payment-record__label">Current balance</span>' +
+      '<span class="payment-record__value"><strong>' + formatMoney(selected.balance) + '</strong></span></div>' +
+      '<label class="payment-record__field payment-record__field--narrow">' +
+      '<span class="payment-record__label">Amount paid</span>' +
+      '<input type="number" class="payment-record__input payment-record__input--amount" id="payment-amount" ' +
+      'inputmode="decimal" step="0.01" min="0.01" value="' + prefilled + '" required></label>' +
+      '</div>' +
+      '<p class="payment-record__status" id="payment-status" aria-live="polite"></p>' +
+      '<div class="poweruser-modal__actions poweruser-modal__actions--payment-record">' +
+      '<button type="button" class="poweruser-modal__cancel" id="payment-record-cancel">Cancel</button>' +
+      '<button type="submit" class="payment-record__submit" id="payment-submit-btn">Record payment</button>' +
+      '</div></form>';
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
 
-    var amountInput = document.getElementById('payment-amount');
+    function onCancel() {
+      closePaymentRecordModal(overlay);
+    }
+
+    modal.querySelector('#payment-record-cancel').addEventListener('click', onCancel);
+    overlay.addEventListener('click', function (e) {
+      if (e.target === overlay) onCancel();
+    });
+
+    var amountInput = modal.querySelector('#payment-amount');
     if (amountInput) {
-      amountInput.addEventListener('focus', function () {
-        this.select();
-      });
+      amountInput.addEventListener('focus', function () { this.select(); });
     }
 
-    var form = document.getElementById('payment-record-form');
-    if (form) {
-      form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        onRecordPaymentSubmit(selected.userName);
-      });
-    }
+    modal.querySelector('#payment-record-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      onRecordPaymentSubmit(selected.userName, overlay, modal);
+    });
   }
 
-  function onRecordPaymentSubmit(userName) {
-    var dateEl = document.getElementById('payment-date');
-    var amountEl = document.getElementById('payment-amount');
-    var statusEl = document.getElementById('payment-status');
-    var submitBtn = document.getElementById('payment-submit-btn');
+  function onRecordPaymentSubmit(userName, overlay, modal) {
+    var dateEl = modal.querySelector('#payment-date');
+    var amountEl = modal.querySelector('#payment-amount');
+    var statusEl = modal.querySelector('#payment-status');
+    var submitBtn = modal.querySelector('#payment-submit-btn');
+    var cancelBtn = modal.querySelector('#payment-record-cancel');
     if (!dateEl || !amountEl) return;
     var paymentDate = dateEl.value;
     var amount = parseFloat(amountEl.value);
@@ -619,18 +727,16 @@
       return;
     }
     if (submitBtn) submitBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
     if (statusEl) statusEl.textContent = 'Saving…';
     ClaimsAPI.recordPayment({ userName: userName, paymentDate: paymentDate, amount: amount })
       .then(function () {
-        if (statusEl) statusEl.textContent = 'Payment recorded.';
-        pageState.paymentSelectedUser = userName;
-        renderRecordPayment();
-        if (pageState.section === 'financial') renderFinancialOverview();
-        if (pageState.section === 'transactions') renderTransactions();
+        showPaymentRecordedAck(overlay, modal);
       })
       .catch(function (err) {
         if (statusEl) statusEl.textContent = err.message || 'Failed to record payment.';
         if (submitBtn) submitBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
       });
   }
 

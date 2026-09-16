@@ -113,7 +113,7 @@
     }
     var footer = data.footer || {};
     html += '<tr class="financial-table__footer">';
-    html += '<td></td>';
+    html += '<td class="financial-table__name"></td>';
     html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.foodTotal) + '</td>';
     html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.extrasTotal) + '</td>';
     html += '<td></td><td class="financial-table__amt">' + formatMoney(footer.drinksTotal) + '</td>';
