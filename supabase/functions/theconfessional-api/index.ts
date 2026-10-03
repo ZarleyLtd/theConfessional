@@ -302,7 +302,7 @@ async function analyzeBillImage(
   if (requested && GEMINI_BILL_ALLOWED_MODELS[requested]) modelId = requested;
 
   const prompt =
-    'Analyze this receipt/bill image and extract all line items. Return ONLY valid JSON (no markdown, no code blocks) with this exact structure: {"date":"YYYY-MM-DD","items":[{"category":"Food" or "Fries" or "Drink","description":"item name","quantity":1,"unit_price":12.00,"total_price":12.00}]}. Use category "Food" for main dishes/sandwiches, "Fries" for fries/sides, "Drink" for beverages. If you cannot determine the date, use today in YYYY-MM-DD.';
+    'Analyze this receipt/bill image and extract all line items. Return ONLY valid JSON (no markdown, no code blocks) with this exact structure: {"date":"YYYY-MM-DD","items":[{"category":"Food" or "Fries" or "Drink","description":"item name","quantity":1,"unit_price":12.00,"total_price":12.00}]}. Use category "Food" for main dishes/sandwiches, "Fries" for fries/sides, "Drink" for beverages. The bill is Irish. When the printed date is numeric, read it as day/month/year (dd/mm/yy or dd/mm/yyyy), never as month/day/year. For example, 02/10/26 and 02/10/2026 both mean 2 October 2026 and must be returned as 2026-10-02. Treat a two-digit year as 20xx. If you cannot determine the date, use today in YYYY-MM-DD.';
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${
       encodeURIComponent(apiKey)
