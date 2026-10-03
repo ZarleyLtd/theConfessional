@@ -43,6 +43,114 @@ function formatDate(v: unknown): string | null {
   return `${y}-${m}-${day}`;
 }
 
+const BILL_MONTH_NUMBERS: Record<string, number> = {
+  jan: 1,
+  january: 1,
+  feb: 2,
+  february: 2,
+  mar: 3,
+  march: 3,
+  apr: 4,
+  april: 4,
+  may: 5,
+  jun: 6,
+  june: 6,
+  jul: 7,
+  july: 7,
+  aug: 8,
+  august: 8,
+  sep: 9,
+  sept: 9,
+  september: 9,
+  oct: 10,
+  october: 10,
+  nov: 11,
+  november: 11,
+  dec: 12,
+  december: 12,
+};
+
+function expandBillYear(year: number): number {
+  return year < 100 ? 2000 + year : year;
+}
+
+function calendarIso(year: number, month: number, day: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  if (year < 1000 || year > 9999) return null;
+  const dt = new Date(Date.UTC(year, month - 1, day));
+  if (
+    dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 ||
+    dt.getUTCDate() !== day
+  ) return null;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+/** Ambiguous numeric dates use Irish day/month. A single valid reading is kept as written. */
+function preferIrishNumericDate(first: number, second: number, year: number): string | null {
+  const dayMonth = calendarIso(year, second, first);
+  const monthDay = calendarIso(year, first, second);
+  if (dayMonth && monthDay) return dayMonth;
+  return dayMonth || monthDay;
+}
+
+function interpretDateToken(token: string): string | null {
+  const text = token.trim().replace(
+    /\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?\s*$/i,
+    "",
+  ).trim();
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return calendarIso(Number(iso[1]), Number(iso[2]), Number(iso[3]));
+
+  const numeric = text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/);
+  if (numeric) {
+    return preferIrishNumericDate(
+      Number(numeric[1]),
+      Number(numeric[2]),
+      expandBillYear(Number(numeric[3])),
+    );
+  }
+
+  const dayFirst = text.match(
+    /^(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?[\s\-\/.]+([A-Za-z]+)\.?[\s\-\/.,]+(\d{2}|\d{4})$/i,
+  );
+  if (dayFirst) {
+    const month = BILL_MONTH_NUMBERS[dayFirst[2].toLowerCase()];
+    if (!month) return null;
+    return calendarIso(expandBillYear(Number(dayFirst[3])), month, Number(dayFirst[1]));
+  }
+
+  const monthFirst = text.match(
+    /^([A-Za-z]+)\.?[\s\-\/.]+(\d{1,2})(?:st|nd|rd|th)?,?[\s\-\/.,]+(\d{2}|\d{4})$/i,
+  );
+  if (monthFirst) {
+    const month = BILL_MONTH_NUMBERS[monthFirst[1].toLowerCase()];
+    if (!month) return null;
+    return calendarIso(expandBillYear(Number(monthFirst[3])), month, Number(monthFirst[2]));
+  }
+
+  return null;
+}
+
+function interpretPrintedBillDate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  if (!text) return null;
+  const direct = interpretDateToken(text);
+  if (direct) return direct;
+  const embedded = text.match(
+    /\d{4}-\d{2}-\d{2}|\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}|\d{1,2}(?:st|nd|rd|th)?(?:\s+of)?[\s\-\/.]+[A-Za-z]{3,}\.?[\s\-\/.,]+\d{2,4}|[A-Za-z]{3,}\.?[\s\-\/.]+\d{1,2}(?:st|nd|rd|th)?,?[\s\-\/.,]+\d{2,4}/i,
+  );
+  return embedded ? interpretDateToken(embedded[0]) : null;
+}
+
+function resolveScannedBillDate(parsed: { date?: unknown; date_printed?: unknown }): string {
+  return interpretPrintedBillDate(parsed.date_printed) ||
+    interpretPrintedBillDate(parsed.date) ||
+    formatDate(parsed.date) ||
+    formatDate(new Date()) ||
+    "";
+}
+
 function normalizeUserName(v: unknown): string {
   return String(v || "").toLowerCase().trim();
 }
@@ -270,10 +378,11 @@ function parseGeminiBillJson(text: string) {
   if (!match) throw new Error("Could not parse model response");
   const parsed = JSON.parse(match[0]) as {
     date?: string;
+    date_printed?: string;
     items?: Array<Record<string, unknown>>;
   };
   if (!Array.isArray(parsed.items)) parsed.items = [];
-  parsed.date = formatDate(parsed.date) || formatDate(new Date()) || "";
+  parsed.date = resolveScannedBillDate(parsed);
   return parsed;
 }
 
@@ -302,7 +411,7 @@ async function analyzeBillImage(
   if (requested && GEMINI_BILL_ALLOWED_MODELS[requested]) modelId = requested;
 
   const prompt =
-    'Analyze this receipt/bill image and extract all line items. Return ONLY valid JSON (no markdown, no code blocks) with this exact structure: {"date":"YYYY-MM-DD","items":[{"category":"Food" or "Fries" or "Drink","description":"item name","quantity":1,"unit_price":12.00,"total_price":12.00}]}. Use category "Food" for main dishes/sandwiches, "Fries" for fries/sides, "Drink" for beverages. The bill is Irish. When the printed date is numeric, read it as day/month/year (dd/mm/yy or dd/mm/yyyy), never as month/day/year. For example, 02/10/26 and 02/10/2026 both mean 2 October 2026 and must be returned as 2026-10-02. Treat a two-digit year as 20xx. If you cannot determine the date, use today in YYYY-MM-DD.';
+    'Analyze this receipt/bill image and extract all line items. Return ONLY valid JSON (no markdown, no code blocks) with this exact structure: {"date":"YYYY-MM-DD","date_printed":"the date exactly as printed","items":[{"category":"Food" or "Fries" or "Drink","description":"item name","quantity":1,"unit_price":12.00,"total_price":12.00}]}. Use category "Food" for main dishes/sandwiches, "Fries" for fries/sides, "Drink" for beverages. Copy the printed date into date_printed without rearranging day and month. Set date from that printed date: if it names a month (for example 1-Mar-2023), use that month and day; if it is numeric and only one order is a real calendar date (for example 3/13/2023 is 13 March 2023, and 13/03/2023 is 13 March 2023), use that order; if both orders are real dates (for example 2-10-2026 or 02/10/26), prefer Irish day/month/year, so 2-10-2026 is 2 October 2026 and must be returned as 2026-10-02. A two-digit year is 20xx. If you cannot determine the date, use today in YYYY-MM-DD and set date_printed to an empty string.';
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${
       encodeURIComponent(apiKey)
