@@ -1,6 +1,7 @@
 /**
  * Product row: one row per line item; horizontal scroll of N buttons (N = quantity);
- * states: available, claimed-by-me, claimed-by-other. Uses images from assets/images.
+ * states: available, claimed-by-me, claimed-by-other, shared-by-me, shared-by-other.
+ * Optional portion-claim mode opens the share dialog.
  */
 (function (global) {
   var config = global.CONFIRMATIONAL_CONFIG || {};
@@ -60,6 +61,53 @@
     return FALLBACK_ICONS.default;
   }
 
+  function badgeHtml(st, claimMap, currentUser, rowIndex, unitIndex) {
+    if (st === 'shared-by-me' || st === 'shared-by-other') {
+      var info = ClaimsState.getSlotInfo(claimMap, rowIndex, unitIndex);
+      var filled;
+      if (st === 'shared-by-me') {
+        filled = ClaimsState.getMyPortions(claimMap, currentUser, rowIndex, unitIndex);
+      } else {
+        filled = Object.keys(info.byIndex || {}).map(function (k) { return parseInt(k, 10); });
+      }
+      if (global.ShareClaimDialog && typeof global.ShareClaimDialog.buildMiniPieBadge === 'function') {
+        return global.ShareClaimDialog.buildMiniPieBadge(info.portionCount, filled);
+      }
+      return '<span class="claims-slot-btn__pie claims-slot-btn__pie--fallback" aria-hidden="true"></span>';
+    }
+    return '';
+  }
+
+  function ariaForState(st, otherNames, description) {
+    if (st === 'claimed-by-me') return (description || 'Item') + ' (click to unclaim)';
+    if (st === 'shared-by-me') return 'Shared claim — tap to edit portions';
+    if (st === 'claimed-by-other') return 'Claimed by ' + (otherNames[0] || 'someone else');
+    if (st === 'shared-by-other') {
+      return otherNames.length
+        ? ('Partially shared with ' + otherNames.join(', ') + ' — tap to claim a portion')
+        : 'Partially shared — tap to claim a portion';
+    }
+    return description || 'Available to claim';
+  }
+
+  function portionToggleSvg() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"></circle>' +
+      '<path d="M12 3v9l6.5 3.75" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>' +
+      '</svg>';
+  }
+
+  function canShare(st) {
+    return st === 'available' || st === 'claimed-by-me' || st === 'shared-by-me' || st === 'shared-by-other';
+  }
+
+  function setPortionModeUi(row, toggle, on) {
+    toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    toggle.classList.toggle('claims-product-row__portion-toggle--on', on);
+    row.classList.toggle('claims-product-row--portion-claim', on);
+    toggle.title = on ? 'Portion claim mode on' : 'Portion claim mode';
+  }
+
   function render(options) {
     options = options || {};
     var slots = options.slots;
@@ -69,33 +117,64 @@
     var quantity = options.quantity || 0;
     var currentUser = options.currentUser || '';
     var claimMap = options.claimMap || {};
-    var mySelection = options.mySelection || [];
     var displayOrder = options.displayOrder;
     var productIcons = options.productIcons || [];
     var onSlotClick = options.onSlotClick || function () {};
     var readOnly = options.readOnly === true;
+    var portionMode = !!options.portionClaimMode;
 
     var wrap = document.createElement('div');
     wrap.className = 'claims-product-row';
+
+    var header = document.createElement('div');
+    header.className = 'claims-product-row__header';
+
+    if (!readOnly) {
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'claims-product-row__portion-toggle';
+      toggle.setAttribute('aria-label', 'Portion claim mode');
+      toggle.innerHTML = portionToggleSvg();
+      setPortionModeUi(wrap, toggle, portionMode);
+      toggle.addEventListener('click', function () {
+        portionMode = !portionMode;
+        setPortionModeUi(wrap, toggle, portionMode);
+        if (options.onPortionClaimModeChange) options.onPortionClaimModeChange(portionMode);
+      });
+      toggle.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+      header.appendChild(toggle);
+    } else if (portionMode) {
+      wrap.classList.add('claims-product-row--portion-claim');
+    }
+
     var label = document.createElement('div');
     label.className = 'claims-product-row__label';
     label.textContent = description + (slots && slots.length ? ' × ' + slots.length : '');
-    wrap.appendChild(label);
+    header.appendChild(label);
+    wrap.appendChild(header);
+
     var strip = document.createElement('div');
     strip.className = 'claims-product-strip';
 
     var orderedSlots;
     if (slots && slots.length > 0) {
-      /* Keep bill order so the button the user clicked stays in place (no re-sort by state). */
       orderedSlots = slots.map(function (s) {
-        return { rowIndex: s.rowIndex, unitIndex: s.unitIndex, state: ClaimsState.getSlotState(claimMap, currentUser, s.rowIndex, s.unitIndex) };
+        return {
+          rowIndex: s.rowIndex,
+          unitIndex: s.unitIndex,
+          state: ClaimsState.getSlotState(claimMap, currentUser, s.rowIndex, s.unitIndex)
+        };
       });
     } else {
       var unitIndices = displayOrder && displayOrder.length === quantity
         ? displayOrder
         : (function () { var a = []; for (var i = 0; i < quantity; i++) a.push(i); return a; })();
       orderedSlots = unitIndices.map(function (u) {
-        return { rowIndex: rowIndex, unitIndex: u, state: ClaimsState.getSlotState(claimMap, currentUser, rowIndex, u) };
+        return {
+          rowIndex: rowIndex,
+          unitIndex: u,
+          state: ClaimsState.getSlotState(claimMap, currentUser, rowIndex, u)
+        };
       });
     }
 
@@ -104,51 +183,61 @@
       var r = s.rowIndex;
       var u = s.unitIndex;
       var slotState = s.state;
-      var claimantName = claimMap[ClaimsState.slotKey(r, u)];
+      var otherNames = ClaimsState.getOtherClaimants(claimMap, currentUser, r, u);
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'claims-slot-btn ' +
-        (slotState === 'available' ? 'available' :
-          slotState === 'claimed-by-me' ? 'claimed-by-me' : 'claimed-by-other');
+      btn.className = 'claims-slot-btn ' + slotState;
       btn.setAttribute('data-row', r);
       btn.setAttribute('data-unit', u);
-      if (slotState === 'claimed-by-other') {
-        btn.setAttribute('data-claimant', claimantName || 'someone else');
+      btn.setAttribute('aria-label', ariaForState(slotState, otherNames, description));
+      btn.title = ariaForState(slotState, otherNames, description);
+      if (slotState === 'claimed-by-other' || slotState === 'shared-by-other') {
+        btn.setAttribute('data-claimant', otherNames.join(', ') || 'someone else');
       }
+
       var imgSrc = getImageSrc(category, description, productIcons);
       if (imgSrc) {
         var img = document.createElement('img');
         img.src = imgSrc;
         img.alt = description;
         img.className = 'claims-slot-btn__img';
+        img.draggable = false;
         btn.appendChild(img);
       } else {
-        btn.textContent = getFallbackIcon(category, description);
+        var iconSpan = document.createElement('span');
+        iconSpan.textContent = getFallbackIcon(category, description);
+        btn.appendChild(iconSpan);
       }
-      if (slotState === 'claimed-by-me') {
-        btn.title = description + ' (click to unclaim)';
-      } else if (slotState === 'claimed-by-other') {
-        btn.title = 'Claimed by ' + (claimantName || 'someone else');
-      } else {
-        btn.title = description;
+
+      var badge = badgeHtml(slotState, claimMap, currentUser, r, u);
+      if (badge) {
+        btn.insertAdjacentHTML('beforeend', badge);
       }
-      if (!readOnly && (slotState === 'available' || slotState === 'claimed-by-me')) {
-        btn.addEventListener('click', function () {
-          var rr = parseInt(this.getAttribute('data-row'), 10);
-          var uu = parseInt(this.getAttribute('data-unit'), 10);
-          onSlotClick(rr, uu);
-        });
-      } else if (!readOnly && slotState === 'claimed-by-other') {
-        btn.addEventListener('click', function () {
-          var rr = parseInt(this.getAttribute('data-row'), 10);
-          var uu = parseInt(this.getAttribute('data-unit'), 10);
-          var claimant = this.getAttribute('data-claimant') || 'someone else';
-          if (options.onClaimedByOtherClick) {
-            options.onClaimedByOtherClick(rr, uu, claimant, this);
-          }
-        });
-      } else if (readOnly) {
+
+      if (readOnly) {
         btn.classList.add('claims-slot-btn--readonly');
+      } else {
+        (function (rowIdx, unitIdx, st, buttonEl) {
+          buttonEl.addEventListener('click', function () {
+            if (st === 'claimed-by-other') {
+              var claimant = buttonEl.getAttribute('data-claimant') || 'someone else';
+              if (options.onClaimedByOtherClick) {
+                options.onClaimedByOtherClick(rowIdx, unitIdx, claimant, buttonEl);
+              }
+              return;
+            }
+            if (portionMode && canShare(st) && options.onSlotShare) {
+              options.onSlotShare(rowIdx, unitIdx, buttonEl);
+              return;
+            }
+            if ((st === 'shared-by-me' || st === 'shared-by-other') && options.onSlotShare) {
+              options.onSlotShare(rowIdx, unitIdx, buttonEl);
+              return;
+            }
+            if (options.onSlotClick) onSlotClick(rowIdx, unitIdx);
+          });
+          buttonEl.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+        })(r, u, slotState, btn);
       }
       strip.appendChild(btn);
     }

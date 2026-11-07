@@ -31,7 +31,8 @@
     configNames: [],
     originalClaimsForUser: [],
     firstOpenBillPrefetchPromise: null,
-    consolidatedRowOrder: {}
+    consolidatedRowOrder: {},
+    portionClaimModeByGroup: {}
   };
 
   function normalizeUserName(name) {
@@ -57,6 +58,7 @@
     state.mySelection = [];
     state.originalClaimsForUser = [];
     state.claimMap = {};
+    state.portionClaimModeByGroup = {};
     renderShell();
   }
 
@@ -308,6 +310,7 @@
     state.originalClaimsForUser = [];
     state.claimMap = {};
     state.consolidatedRowOrder = {};
+    state.portionClaimModeByGroup = {};
     renderShell();
 
     var split = getOpenAndHistoricalDates();
@@ -345,9 +348,9 @@
       state.bill = results[0];
       state.claims = results[1] || [];
       state.productIcons = results[2] || [];
-      state.claimMap = ClaimsState.buildClaimMap(state.claims);
       state.mySelection = ClaimsState.getMySelectionFromClaims(state.claims, state.userName);
-      state.originalClaimsForUser = state.mySelection.map(function (s) { return { rowIndex: s.rowIndex, unitIndex: s.unitIndex }; });
+      state.originalClaimsForUser = ClaimsState.toSubmitPayload(state.mySelection);
+      rebuildClaimMapFromSelection();
       state.displayOrderByRow = {};
       state.productsLoading = false;
       renderShell();
@@ -513,7 +516,13 @@
     listEl.className = 'claims-products-list';
     mount.appendChild(listEl);
     var consolidated = buildConsolidatedItems(bill);
-    var stateOrder = { 'claimed-by-me': 0, 'available': 1, 'claimed-by-other': 2 };
+    var stateOrder = {
+      'claimed-by-me': 0,
+      'shared-by-me': 1,
+      'available': 2,
+      'shared-by-other': 3,
+      'claimed-by-other': 4
+    };
     for (var idx = 0; idx < consolidated.length; idx++) {
       var group = consolidated[idx];
       var rowKey = 'g' + idx;
@@ -524,7 +533,7 @@
         var withState = group.slots.map(function (s) {
           return { rowIndex: s.rowIndex, unitIndex: s.unitIndex, state: ClaimsState.getSlotState(state.claimMap, state.userName, s.rowIndex, s.unitIndex) };
         });
-        withState.sort(function (a, b) { return stateOrder[a.state] - stateOrder[b.state]; });
+        withState.sort(function (a, b) { return (stateOrder[a.state] || 9) - (stateOrder[b.state] || 9); });
         slotsToUse = withState.map(function (x) { return { rowIndex: x.rowIndex, unitIndex: x.unitIndex }; });
         state.consolidatedRowOrder[rowKey] = slotsToUse;
       }
@@ -536,7 +545,15 @@
         claimMap: state.claimMap,
         mySelection: state.mySelection,
         productIcons: state.productIcons,
+        portionClaimMode: !!state.portionClaimModeByGroup[rowKey],
         onSlotClick: state.isReviewMode ? undefined : function (rowIndex, unitIndex) { onSlotClick(rowIndex, unitIndex); },
+        onSlotShare: state.isReviewMode ? undefined : function (rowIndex, unitIndex) { onSlotShare(rowIndex, unitIndex); },
+        onPortionClaimModeChange: state.isReviewMode ? undefined : (function (rk) {
+          return function (on) {
+            if (on) state.portionClaimModeByGroup[rk] = true;
+            else delete state.portionClaimModeByGroup[rk];
+          };
+        })(rowKey),
         onClaimedByOtherClick: state.isReviewMode ? undefined : function (rowIndex, unitIndex, claimantName, buttonEl) {
           showClaimedByOtherMessage(claimantName, buttonEl);
         },
@@ -556,25 +573,114 @@
     }
   }
 
+  function rebuildClaimMapFromSelection() {
+    var otherMap = ClaimsState.buildClaimMapExcludingUser(state.claims, state.userName);
+    state.claimMap = ClaimsState.applySelectionToClaimMap(
+      otherMap,
+      state.mySelection,
+      state.userName
+    );
+  }
+
+  function findItemDescription(rowIndex) {
+    var items = (state.bill && state.bill.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].rowIndex === rowIndex) return items[i].description || 'Item';
+    }
+    return 'Item';
+  }
+
+  function findSelectionIndex(rowIndex, unitIndex) {
+    return state.mySelection.findIndex(function (s) {
+      return s.rowIndex === rowIndex && s.unitIndex === unitIndex;
+    });
+  }
+
+  function openShareDialog(rowIndex, unitIndex) {
+    if (!global.ShareClaimDialog) return;
+    var st = ClaimsState.getSlotState(state.claimMap, state.userName, rowIndex, unitIndex);
+    if (st === 'claimed-by-other') return;
+
+    var otherMap = ClaimsState.buildClaimMapExcludingUser(state.claims, state.userName);
+    var slotInfo = ClaimsState.getSlotInfo(otherMap, rowIndex, unitIndex);
+    var othersByIndex = {};
+    var idxs = Object.keys(slotInfo.byIndex || {});
+    for (var i = 0; i < idxs.length; i++) {
+      othersByIndex[idxs[i]] = slotInfo.byIndex[idxs[i]];
+    }
+
+    var existingIdx = findSelectionIndex(rowIndex, unitIndex);
+    var existing = existingIdx >= 0 ? state.mySelection[existingIdx] : null;
+    var selectedPortions = [];
+    var portionCount = 2;
+    var othersLocked = Object.keys(othersByIndex).length > 0;
+    var locked = othersLocked;
+
+    if (othersLocked) {
+      portionCount = Math.max(2, slotInfo.portionCount || 2);
+    }
+
+    if (existing && ClaimsState.isShareSelection(existing)) {
+      selectedPortions = existing.portions.slice();
+      portionCount = existing.portionCount;
+      locked = true;
+    } else if (existing && !ClaimsState.isShareSelection(existing)) {
+      selectedPortions = [];
+      if (!othersLocked) portionCount = 2;
+    }
+
+    global.ShareClaimDialog.open({
+      description: findItemDescription(rowIndex),
+      portionCount: portionCount,
+      locked: locked,
+      currentUser: state.userName,
+      othersByIndex: othersByIndex,
+      selectedPortions: selectedPortions,
+      onConfirm: function (result) {
+        var next = state.mySelection.filter(function (s) {
+          return !(s.rowIndex === rowIndex && s.unitIndex === unitIndex);
+        });
+        if (result.portions && result.portions.length) {
+          next.push({
+            rowIndex: rowIndex,
+            unitIndex: unitIndex,
+            portionCount: result.portionCount,
+            portions: result.portions.slice()
+          });
+        }
+        state.mySelection = next;
+        rebuildClaimMapFromSelection();
+        renderBill();
+      }
+    });
+  }
+
+  function onSlotShare(rowIndex, unitIndex) {
+    var st = ClaimsState.getSlotState(state.claimMap, state.userName, rowIndex, unitIndex);
+    if (st === 'claimed-by-other') return;
+    openShareDialog(rowIndex, unitIndex);
+  }
+
   function onSlotClick(rowIndex, unitIndex) {
     var slotState = ClaimsState.getSlotState(state.claimMap, state.userName, rowIndex, unitIndex);
     if (slotState === 'claimed-by-other') {
-      var claim = (state.claims || []).find(function (c) {
-        return c.rowIndex === rowIndex && c.unitIndex === unitIndex;
-      });
-      var name = (claim && claim.userName) ? claim.userName : 'someone else';
-      alert('This has already been claimed by ' + name);
+      var names = ClaimsState.getOtherClaimants(state.claimMap, state.userName, rowIndex, unitIndex);
+      alert('This has already been claimed by ' + (names[0] || 'someone else'));
       return;
     }
-    var idx = state.mySelection.findIndex(function (s) { return s.rowIndex === rowIndex && s.unitIndex === unitIndex; });
+    if (slotState === 'shared-by-me' || slotState === 'shared-by-other') {
+      openShareDialog(rowIndex, unitIndex);
+      return;
+    }
+    var idx = findSelectionIndex(rowIndex, unitIndex);
     if (slotState === 'claimed-by-me' || idx >= 0) {
-      state.mySelection = state.mySelection.filter(function (s) { return !(s.rowIndex === rowIndex && s.unitIndex === unitIndex); });
-      state.claims = state.claims.filter(function (c) { return !(c.rowIndex === rowIndex && c.unitIndex === unitIndex && String(c.userName || '').toLowerCase() === String(state.userName || '').toLowerCase()); });
+      state.mySelection = state.mySelection.filter(function (s) {
+        return !(s.rowIndex === rowIndex && s.unitIndex === unitIndex);
+      });
     } else {
       state.mySelection.push({ rowIndex: rowIndex, unitIndex: unitIndex });
-      state.claims = state.claims.concat([{ date: state.selectedDate, userName: state.userName, rowIndex: rowIndex, unitIndex: unitIndex }]);
     }
-    state.claimMap = ClaimsState.buildClaimMap(state.claims);
+    rebuildClaimMapFromSelection();
     renderBill();
   }
 
@@ -600,7 +706,9 @@
     var claimedTotal = 0;
     for (var j = 0; j < sel.length; j++) {
       var up = rowToUnitPrice[sel[j].rowIndex];
-      if (typeof up === 'number' && !isNaN(up)) claimedTotal += up;
+      if (typeof up === 'number' && !isNaN(up)) {
+        claimedTotal += up * ClaimsState.selectionFraction(sel[j]);
+      }
     }
     var totalPaid = (bill.metadata && bill.metadata.totalPaid != null) ? parseFloat(bill.metadata.totalPaid) : null;
     var tip = (totalPaid != null && !isNaN(totalPaid) && billTotal > 0 && totalPaid > billTotal)
@@ -624,23 +732,24 @@
   function updateDescriptiveLabel() {
     var el = document.getElementById('claims-descriptive-label');
     if (!el) return;
-    var consolidated = buildConsolidatedItems(state.bill);
-    var selSet = {};
+    var byGroup = {};
     (state.mySelection || []).forEach(function (s) {
-      var k = s.rowIndex + '_' + s.unitIndex;
-      selSet[k] = true;
+      var desc = findItemDescription(s.rowIndex);
+      var portionCount = ClaimsState.isShareSelection(s) ? s.portionCount : 1;
+      var portions = ClaimsState.isShareSelection(s) ? s.portions.length : 1;
+      var key = desc + '|p' + portionCount;
+      if (!byGroup[key]) {
+        byGroup[key] = { description: desc, portions: 0, portionCount: portionCount };
+      }
+      byGroup[key].portions += portions;
     });
     var parts = [];
-    for (var i = 0; i < consolidated.length; i++) {
-      var group = consolidated[i];
-      var count = 0;
-      for (var j = 0; j < group.slots.length; j++) {
-        var slot = group.slots[j];
-        if (selSet[slot.rowIndex + '_' + slot.unitIndex]) count++;
-      }
-      if (count > 0) {
-        parts.push('<strong>' + escapeHtml(group.description) + '</strong> (' + count + ')');
-      }
+    var keys = Object.keys(byGroup);
+    for (var i = 0; i < keys.length; i++) {
+      var g = byGroup[keys[i]];
+      var label = ClaimsState.formatQuantityLabel(g.portions, g.portionCount);
+      var qtyText = label ? ' (' + label.replace(/^x/, '') + ')' : (g.portions > 1 ? ' (' + g.portions + ')' : '');
+      parts.push('<strong>' + escapeHtml(g.description) + '</strong>' + qtyText);
     }
     el.innerHTML = 'Your selection: ' + (parts.length ? parts.join(', ') : '(none)');
     updateEstimatedCost();
@@ -712,10 +821,7 @@
       return;
     }
 
-    var same = original.length === sel.length && sel.every(function (s) {
-      return original.some(function (e) { return e.rowIndex === s.rowIndex && e.unitIndex === s.unitIndex; });
-    });
-    if (same) {
+    if (ClaimsState.selectionUnchanged(sel, original)) {
       showInfoMessage('Claim already recorded', btn);
       return;
     }
@@ -727,7 +833,7 @@
     ClaimsAPI.submitClaims({
       date: state.selectedDate,
       userName: state.userName,
-      claims: state.mySelection
+      claims: ClaimsState.toSubmitPayload(state.mySelection)
     }).then(function (data) {
       var claims = (data && Array.isArray(data.claims)) ? data.claims : null;
       if (claims == null) {
@@ -737,10 +843,10 @@
     }).then(function (claims) {
       claims = claims || [];
       state.claims = claims;
-      state.claimMap = ClaimsState.buildClaimMap(state.claims);
       state.claimsCache[state.selectedDate] = { claims: claims, fetchedAt: Date.now() };
       state.mySelection = ClaimsState.getMySelectionFromClaims(state.claims, state.userName);
-      state.originalClaimsForUser = state.mySelection.map(function (s) { return { rowIndex: s.rowIndex, unitIndex: s.unitIndex }; });
+      state.originalClaimsForUser = ClaimsState.toSubmitPayload(state.mySelection);
+      rebuildClaimMapFromSelection();
       renderBill();
       btn.disabled = false;
       btn.classList.remove('claims-submit-btn--processing');
@@ -762,11 +868,11 @@
       btn.classList.remove('claims-submit-btn--processing');
       var textEl = btn.querySelector('.claims-submit-btn__text');
       if (textEl) textEl.textContent = 'Submit my claims';
-      if (msg.indexOf('already claimed') >= 0 || msg.indexOf('slot') >= 0) {
+      if (String(msg).toLowerCase().indexOf('claimed') >= 0 || String(msg).toLowerCase().indexOf('portion') >= 0) {
         ClaimsAPI.getClaims(state.selectedDate).then(function (claims) {
           state.claims = claims || [];
-          state.claimMap = ClaimsState.buildClaimMap(state.claims);
           state.mySelection = ClaimsState.getMySelectionFromClaims(state.claims, state.userName);
+          rebuildClaimMapFromSelection();
           state.claimsCache[state.selectedDate] = { claims: claims, fetchedAt: Date.now() };
           renderBill();
         }).catch(function () {});

@@ -765,33 +765,67 @@
     return consolidated;
   }
 
-  /** Get claimant summary as array of lines: ["John (1)", "Gary (2)", "Unclaimed (1)"] */
+  function sumPortionLabel(partsArr) {
+    if (!partsArr || !partsArr.length) return '0';
+    var sameDenom = true;
+    var d0 = partsArr[0].portionCount;
+    var pSum = 0;
+    var frac = 0;
+    for (var x = 0; x < partsArr.length; x++) {
+      if (partsArr[x].portionCount !== d0) sameDenom = false;
+      pSum += partsArr[x].portions;
+      frac += partsArr[x].portions / partsArr[x].portionCount;
+    }
+    if (sameDenom) return ClaimsState.formatClaimCountLabel(pSum, d0);
+    var rounded = Math.round(frac * 1000) / 1000;
+    if (Math.abs(rounded - Math.round(rounded)) < 0.001) return String(Math.round(rounded));
+    return String(rounded);
+  }
+
+  /** Get claimant summary as array of lines: ["John (1)", "Gary (1/2)", "Unclaimed (1/2)"] */
   function getClaimantLines(slots, claimMap) {
     var byUser = {};
-    var unclaimed = 0;
     for (var i = 0; i < slots.length; i++) {
-      var k = slots[i].rowIndex + '_' + slots[i].unitIndex;
-      var name = claimMap[k];
-      if (!name || String(name).trim() === '') {
-        unclaimed++;
-      } else {
-        byUser[name] = (byUser[name] || 0) + 1;
+      var info = ClaimsState.getSlotInfo(claimMap, slots[i].rowIndex, slots[i].unitIndex);
+      var portionCount = Math.max(1, info.portionCount || 1);
+      var taken = Object.keys(info.byIndex || {}).length;
+      var free = portionCount - taken;
+      if (free > 0) {
+        if (!byUser.__unclaimed) byUser.__unclaimed = [];
+        byUser.__unclaimed.push({ portions: free, portionCount: portionCount });
+      }
+      var perUser = {};
+      var indexes = Object.keys(info.byIndex || {});
+      for (var j = 0; j < indexes.length; j++) {
+        var name = String(info.byIndex[indexes[j]] || '').trim();
+        if (!name) continue;
+        perUser[name] = (perUser[name] || 0) + 1;
+      }
+      var userNames = Object.keys(perUser);
+      for (var u = 0; u < userNames.length; u++) {
+        name = userNames[u];
+        if (!byUser[name]) byUser[name] = [];
+        byUser[name].push({ portions: perUser[name], portionCount: portionCount });
       }
     }
     var lines = [];
-    var names = Object.keys(byUser).sort();
-    for (var j = 0; j < names.length; j++) {
-      lines.push(names[j] + ' (' + byUser[names[j]] + ')');
+    var names = Object.keys(byUser).filter(function (n) { return n !== '__unclaimed'; }).sort();
+    for (var n = 0; n < names.length; n++) {
+      lines.push(names[n] + ' (' + sumPortionLabel(byUser[names[n]]) + ')');
     }
-    if (unclaimed > 0) lines.push('Unclaimed (' + unclaimed + ')');
+    if (byUser.__unclaimed && byUser.__unclaimed.length) {
+      lines.push('Unclaimed (' + sumPortionLabel(byUser.__unclaimed) + ')');
+    }
     return lines;
   }
 
-  /** Check if any slot is unclaimed */
+  /** Check if any slot has free portions remaining */
   function hasUnclaimed(slots, claimMap) {
     for (var i = 0; i < slots.length; i++) {
-      var k = slots[i].rowIndex + '_' + slots[i].unitIndex;
-      if (!claimMap[k] || String(claimMap[k]).trim() === '') return true;
+      var info = ClaimsState.getSlotInfo(claimMap, slots[i].rowIndex, slots[i].unitIndex);
+      var portionCount = Math.max(1, info.portionCount || 1);
+      var taken = Object.keys(info.byIndex || {}).length;
+      if (taken < portionCount) return true;
     }
     return false;
   }
@@ -821,27 +855,44 @@
   function formatUserRow(userName, data) {
     var empty = { food: [], fries: [], drinks: [] };
     data = data || empty;
-    var foodNames = data.food.map(function (x) { return x.desc; }).join(', ');
-    var foodPrices = data.food.length ? '=' + data.food.map(function (x) { return String(x.unitPrice); }).join('+') : '';
-    var friesNames = data.fries.map(function (x) { return x.desc; }).join(', ');
-    var friesPrices = data.fries.length ? '=' + data.fries.map(function (x) { return String(x.unitPrice); }).join('+') : '';
+    var foodNames = data.food.map(function (x) {
+      var label = ClaimsState.formatQuantityLabel(x.portions, x.portionCount);
+      return label ? x.desc + ' ' + label : x.desc;
+    }).join(', ');
+    var foodPrices = data.food.length
+      ? '=' + data.food.map(function (x) {
+          var amt = (x.portions / Math.max(1, x.portionCount)) * x.unitPrice;
+          return String(Math.round(amt * 100) / 100);
+        }).join('+')
+      : '';
+    var friesNames = data.fries.map(function (x) {
+      var label = ClaimsState.formatQuantityLabel(x.portions, x.portionCount);
+      return label ? x.desc + ' ' + label : x.desc;
+    }).join(', ');
+    var friesPrices = data.fries.length
+      ? '=' + data.fries.map(function (x) {
+          var amt = (x.portions / Math.max(1, x.portionCount)) * x.unitPrice;
+          return String(Math.round(amt * 100) / 100);
+        }).join('+')
+      : '';
     var drinksParts = [];
     var drinksPricesParts = [];
     var seenDrink = {};
     for (var d = 0; d < data.drinks.length; d++) {
       var dx = data.drinks[d];
-      var key = dx.desc;
+      var key = dx.desc + '|' + dx.portionCount;
       if (!seenDrink[key]) {
-        seenDrink[key] = { count: 0, price: dx.unitPrice };
+        seenDrink[key] = { desc: dx.desc, portions: 0, portionCount: dx.portionCount, price: dx.unitPrice };
       }
-      seenDrink[key].count++;
+      seenDrink[key].portions += dx.portions;
     }
     var drinkKeys = Object.keys(seenDrink);
     for (var dk = 0; dk < drinkKeys.length; dk++) {
-      var desc = drinkKeys[dk];
-      var obj = seenDrink[desc];
-      drinksParts.push(obj.count + ' ' + desc.toLowerCase());
-      drinksPricesParts.push(obj.price + '*' + obj.count);
+      var obj = seenDrink[drinkKeys[dk]];
+      var countLabel = ClaimsState.formatClaimCountLabel(obj.portions, obj.portionCount);
+      drinksParts.push(countLabel + ' ' + obj.desc.toLowerCase());
+      var drinkAmt = (obj.portions / Math.max(1, obj.portionCount)) * obj.price;
+      drinksPricesParts.push(String(Math.round(drinkAmt * 100) / 100));
     }
     var drinksNames = drinksParts.join(', ');
     var drinksPrices = drinksPricesParts.length ? '=' + drinksPricesParts.join('+') : '';
@@ -860,12 +911,26 @@
       var exportCat = getExportCategory(g.category);
       for (var j = 0; j < g.slots.length; j++) {
         var s = g.slots[j];
-        var k = s.rowIndex + '_' + s.unitIndex;
-        var name = (claimMap[k] || '').trim();
-        if (!name) continue;
-        if (!byUser[name]) byUser[name] = { food: [], fries: [], drinks: [] };
-        var arr = byUser[name][exportCat];
-        arr.push({ desc: g.description, unitPrice: g.unitPrice });
+        var info = ClaimsState.getSlotInfo(claimMap, s.rowIndex, s.unitIndex);
+        var portionCount = Math.max(1, info.portionCount || 1);
+        var perUser = {};
+        var indexes = Object.keys(info.byIndex || {});
+        for (var ix = 0; ix < indexes.length; ix++) {
+          var name = String(info.byIndex[indexes[ix]] || '').trim();
+          if (!name) continue;
+          perUser[name] = (perUser[name] || 0) + 1;
+        }
+        var userNames = Object.keys(perUser);
+        for (var u = 0; u < userNames.length; u++) {
+          name = userNames[u];
+          if (!byUser[name]) byUser[name] = { food: [], fries: [], drinks: [] };
+          byUser[name][exportCat].push({
+            desc: g.description,
+            unitPrice: g.unitPrice,
+            portions: perUser[name],
+            portionCount: portionCount
+          });
+        }
       }
     }
     var orderedSet = {};
@@ -895,38 +960,55 @@
       var g = consolidated[i];
       for (var j = 0; j < g.slots.length; j++) {
         var s = g.slots[j];
-        var k = s.rowIndex + '_' + s.unitIndex;
-        var name = (claimMap[k] || '').trim();
-        if (!name) continue;
-        if (!byUser[name]) byUser[name] = {};
-        var key = g.description + '|' + g.unitPrice;
-        if (!byUser[name][key]) {
-          byUser[name][key] = { description: g.description, quantity: 0, unitPrice: g.unitPrice };
+        var info = ClaimsState.getSlotInfo(claimMap, s.rowIndex, s.unitIndex);
+        var portionCount = Math.max(1, info.portionCount || 1);
+        var perUser = {};
+        var indexes = Object.keys(info.byIndex || {});
+        for (var ix = 0; ix < indexes.length; ix++) {
+          var name = String(info.byIndex[indexes[ix]] || '').trim();
+          if (!name) continue;
+          perUser[name] = (perUser[name] || 0) + 1;
         }
-        byUser[name][key].quantity++;
+        var userNames = Object.keys(perUser);
+        for (var u = 0; u < userNames.length; u++) {
+          name = userNames[u];
+          if (!byUser[name]) byUser[name] = {};
+          var key = g.description + '|' + g.unitPrice + '|p' + portionCount;
+          if (!byUser[name][key]) {
+            byUser[name][key] = {
+              description: g.description,
+              portions: 0,
+              portionCount: portionCount,
+              unitPrice: g.unitPrice
+            };
+          }
+          byUser[name][key].portions += perUser[name];
+        }
       }
     }
     var result = {};
     var users = Object.keys(byUser);
-    for (var u = 0; u < users.length; u++) {
-      var userName = users[u];
+    for (var ui = 0; ui < users.length; ui++) {
+      var userName = users[ui];
       var prods = byUser[userName];
       result[userName] = [];
       var keys = Object.keys(prods);
       for (var pk = 0; pk < keys.length; pk++) {
         var p = prods[keys[pk]];
+        var qtyLabel = ClaimsState.formatQuantityLabel(p.portions, p.portionCount);
+        var frac = p.portions / Math.max(1, p.portionCount);
         result[userName].push({
-          description: p.description + (p.quantity > 1 ? ' x' + p.quantity : ''),
-          quantity: p.quantity,
+          description: p.description + (qtyLabel ? ' ' + qtyLabel : ''),
+          quantity: frac,
           unitPrice: p.unitPrice,
-          totalPrice: p.unitPrice * p.quantity
+          totalPrice: p.unitPrice * frac
         });
       }
     }
     return result;
   }
 
-  /** Unclaimed slots grouped by product (same shape as buildByUserView entries). */
+  /** Unclaimed slots / free portions grouped by product (same shape as buildByUserView entries). */
   function buildUnclaimedView(bill) {
     if (!bill || !bill.items) return null;
     var claimMap = typeof ClaimsState !== 'undefined' && ClaimsState.buildClaimMap
@@ -937,25 +1019,34 @@
       var g = consolidated[i];
       for (var j = 0; j < g.slots.length; j++) {
         var s = g.slots[j];
-        var k = s.rowIndex + '_' + s.unitIndex;
-        var name = (claimMap[k] || '').trim();
-        if (name) continue;
-        var key = g.description + '|' + g.unitPrice;
+        var info = ClaimsState.getSlotInfo(claimMap, s.rowIndex, s.unitIndex);
+        var portionCount = Math.max(1, info.portionCount || 1);
+        var taken = Object.keys(info.byIndex || {}).length;
+        var free = portionCount - taken;
+        if (free <= 0) continue;
+        var key = g.description + '|' + g.unitPrice + '|p' + portionCount;
         if (!prods[key]) {
-          prods[key] = { description: g.description, quantity: 0, unitPrice: g.unitPrice };
+          prods[key] = {
+            description: g.description,
+            portions: 0,
+            portionCount: portionCount,
+            unitPrice: g.unitPrice
+          };
         }
-        prods[key].quantity++;
+        prods[key].portions += free;
       }
     }
     var items = [];
     var keys = Object.keys(prods);
     for (var pk = 0; pk < keys.length; pk++) {
       var p = prods[keys[pk]];
+      var qtyLabel = ClaimsState.formatQuantityLabel(p.portions, p.portionCount);
+      var frac = p.portions / Math.max(1, p.portionCount);
       items.push({
-        description: p.description + (p.quantity > 1 ? ' x' + p.quantity : ''),
-        quantity: p.quantity,
+        description: p.description + (qtyLabel ? ' ' + qtyLabel : ''),
+        quantity: frac,
         unitPrice: p.unitPrice,
-        totalPrice: p.unitPrice * p.quantity
+        totalPrice: p.unitPrice * frac
       });
     }
     if (items.length === 0) return null;

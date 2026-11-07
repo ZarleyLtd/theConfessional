@@ -155,6 +155,93 @@ function normalizeUserName(v: unknown): string {
   return String(v || "").toLowerCase().trim();
 }
 
+function normalizeWhitespace(v: unknown): string {
+  return String(v || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeItemDescription(raw: unknown): string {
+  let original = normalizeWhitespace(raw);
+  if (!original) return "";
+  let text = original;
+  text = text.replace(/^\d+\s*(?:x|×)?\s+/i, "");
+  text = text.replace(/\s*\(\d+\)\s*$/, "");
+  const atIdx = text.search(/\s+@\s*[€$£]?\s*\d/i);
+  if (atIdx >= 0) text = text.substring(0, atIdx);
+  const xIdx = text.search(/\s+x\s*\d+\b/i);
+  if (xIdx >= 0) text = text.substring(0, xIdx);
+  text = text.replace(
+    /\s+[€$£]\s*\d+(?:[.,]\d+)?(?:\s+[€$£]\s*\d+(?:[.,]\d+)?)?\s*$/,
+    "",
+  );
+  text = normalizeWhitespace(text.replace(/[-,:;]+$/, ""));
+  return text || original;
+}
+
+function itemGroupKey(
+  description: string,
+  unitPrice: number,
+  category: string,
+): string {
+  const descKey = normalizeWhitespace(description).toLowerCase();
+  const unitCents = Math.round((Number(unitPrice) || 0) * 100);
+  const catKey = normalizeWhitespace(category).toLowerCase();
+  return `${descKey}|${catKey}|${unitCents}`;
+}
+
+function formatQuantityLabel(portions: number, portionCount: number): string {
+  let p = Math.round(Number(portions));
+  let d = Math.round(Number(portionCount));
+  if (isNaN(p) || p < 0) p = 0;
+  if (isNaN(d) || d < 1) d = 1;
+  if (d === 1) {
+    if (p <= 1) return "";
+    return "x" + p;
+  }
+  return "x" + p + "/" + d;
+}
+
+function mapClaimRow(r: Record<string, unknown>, dateFallback?: string) {
+  const portionCount = Math.max(
+    1,
+    parseInt(String(r.portion_count ?? r.portionCount ?? 1), 10) || 1,
+  );
+  const portionIndex = parseInt(
+    String(r.portion_index ?? r.portionIndex ?? 0),
+    10,
+  );
+  return {
+    date: formatDate(r.bill_date) || dateFallback || null,
+    userName: String(r.user_name || r.userName || ""),
+    rowIndex: Number(r.row_index ?? r.rowIndex) || 0,
+    unitIndex: Number(r.unit_index ?? r.unitIndex) || 0,
+    portionCount,
+    portionIndex: isNaN(portionIndex) ? 0 : portionIndex,
+  };
+}
+
+type ClaimSubmitEntry = {
+  rowIndex: number;
+  unitIndex: number;
+  portionCount?: number;
+  portions?: number[];
+};
+
+type ClaimRow = {
+  date?: string | null;
+  userName: string;
+  rowIndex: number;
+  unitIndex: number;
+  portionCount: number;
+  portionIndex: number;
+};
+
+type ResolvedClaimRow = {
+  rowIndex: number;
+  unitIndex: number;
+  portionCount: number;
+  portionIndex: number;
+};
+
 async function getDatesWithBills(sb: ReturnType<typeof createClient>) {
   const { data, error } = await sb.from("bills").select("bill_date, open").not(
     "open",
@@ -223,15 +310,10 @@ async function getClaimsForDate(sb: ReturnType<typeof createClient>, date: strin
   const dateStr = formatDate(date);
   if (!dateStr) return [];
   const { data, error } = await sb.from("claims").select(
-    "bill_date, user_name, row_index, unit_index",
+    "bill_date, user_name, row_index, unit_index, portion_count, portion_index",
   ).eq("bill_date", dateStr).order("id", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data || []).map((r: Record<string, unknown>) => ({
-    date: formatDate(r.bill_date),
-    userName: String(r.user_name || ""),
-    rowIndex: Number(r.row_index) || 0,
-    unitIndex: Number(r.unit_index) || 0,
-  }));
+  return (data || []).map((r: Record<string, unknown>) => mapClaimRow(r, dateStr));
 }
 
 async function getConfigNames(sb: ReturnType<typeof createClient>) {
@@ -273,7 +355,7 @@ async function getAllBillsFull(sb: ReturnType<typeof createClient>) {
   );
   if (metaErr) throw new Error(metaErr.message);
   const { data: claimsData, error: claimsErr } = await sb.from("claims").select(
-    "bill_date, user_name, row_index, unit_index",
+    "bill_date, user_name, row_index, unit_index, portion_count, portion_index",
   );
   if (claimsErr) throw new Error(claimsErr.message);
 
@@ -301,15 +383,11 @@ async function getAllBillsFull(sb: ReturnType<typeof createClient>) {
 
   const claimsByDate: Record<string, Array<Record<string, unknown>>> = {};
   for (const row of claimsData || []) {
-    const d = formatDate((row as Record<string, unknown>).bill_date);
+    const mapped = mapClaimRow(row as Record<string, unknown>);
+    const d = mapped.date;
     if (!d) continue;
     if (!claimsByDate[d]) claimsByDate[d] = [];
-    claimsByDate[d].push({
-      date: d,
-      userName: String((row as Record<string, unknown>).user_name || ""),
-      rowIndex: Number((row as Record<string, unknown>).row_index) || 0,
-      unitIndex: Number((row as Record<string, unknown>).unit_index) || 0,
-    });
+    claimsByDate[d].push(mapped);
   }
 
   const dates = Object.keys(itemsByDate).sort();
@@ -329,15 +407,26 @@ async function getBillsSummary(sb: ReturnType<typeof createClient>) {
   const bills = (full.bills || []).map((b: Record<string, unknown>) => {
     const items = (b.items as Array<Record<string, unknown>>) || [];
     const claims = (b.claims as Array<Record<string, unknown>>) || [];
-    const claimMap: Record<string, string> = {};
+    const claimsBySlot: Record<string, Array<Record<string, unknown>>> = {};
     for (const c of claims) {
-      claimMap[`${c.rowIndex}_${c.unitIndex}`] = String(c.userName || "");
+      const key = `${c.rowIndex}_${c.unitIndex}`;
+      if (!claimsBySlot[key]) claimsBySlot[key] = [];
+      claimsBySlot[key].push(c);
     }
     let allClaimed = items.length > 0;
     for (const it of items) {
       const qty = Number(it.quantity) || 0;
       for (let i = 0; i < qty; i++) {
-        if (!claimMap[`${it.rowIndex}_${i}`]) {
+        const slotClaims = claimsBySlot[`${it.rowIndex}_${i}`] || [];
+        if (!slotClaims.length) {
+          allClaimed = false;
+          break;
+        }
+        const portionCount = Math.max(
+          1,
+          Number(slotClaims[0].portionCount) || 1,
+        );
+        if (slotClaims.length < portionCount) {
           allClaimed = false;
           break;
         }
@@ -629,42 +718,207 @@ async function deleteBill(sb: ReturnType<typeof createClient>, body: Record<stri
   return { ok: true };
 }
 
+function normalizeSubmitEntry(cl: ClaimSubmitEntry): {
+  rowIndex: number;
+  unitIndex: number;
+  portionCount: number;
+  portions: number[];
+  isShare: boolean;
+} {
+  const rowIndex = parseInt(String(cl.rowIndex), 10) || 0;
+  const unitIndex = parseInt(String(cl.unitIndex), 10) || 0;
+  const rawPortions = Array.isArray(cl.portions) ? cl.portions : null;
+  const requestedCount = parseInt(String(cl.portionCount ?? 1), 10) || 1;
+  if (rawPortions && rawPortions.length > 0) {
+    const portionCount = Math.max(2, Math.min(10, requestedCount));
+    const seen: Record<number, boolean> = {};
+    const portions: number[] = [];
+    for (const p of rawPortions) {
+      const idx = parseInt(String(p), 10);
+      if (isNaN(idx) || idx < 0 || idx >= portionCount) {
+        throw new Error("Invalid portion index: " + p);
+      }
+      if (seen[idx]) continue;
+      seen[idx] = true;
+      portions.push(idx);
+    }
+    portions.sort((a, b) => a - b);
+    if (!portions.length) {
+      throw new Error("Share claim requires at least one portion");
+    }
+    return {
+      rowIndex,
+      unitIndex,
+      portionCount,
+      portions,
+      isShare: true,
+    };
+  }
+  return {
+    rowIndex,
+    unitIndex,
+    portionCount: 1,
+    portions: [0],
+    isShare: false,
+  };
+}
+
 function resolveClaimsSubmission(
   billItems: Array<{
     rowIndex: number;
+    category: string;
+    description: string;
     quantity: number;
+    unit_price: number;
   }>,
-  existingClaims: Array<{ userName: string; rowIndex: number; unitIndex: number }>,
+  sheetClaims: ClaimRow[],
   userName: string,
-  claims: Array<{ rowIndex: number; unitIndex: number }>,
-) {
+  claims: ClaimSubmitEntry[],
+): ResolvedClaimRow[] {
   const validSlots: Record<string, boolean> = {};
-  for (const item of billItems) {
-    for (let u = 0; u < item.quantity; u++) validSlots[`${item.rowIndex}_${u}`] = true;
-  }
-  for (const claim of claims) {
-    const slot = `${claim.rowIndex}_${claim.unitIndex}`;
-    if (!validSlots[slot]) throw new Error(`Invalid slot: rowIndex ${claim.rowIndex}, unitIndex ${claim.unitIndex}`);
-  }
-  const mine = normalizeUserName(userName);
-  const claimedByOthers: Record<string, boolean> = {};
-  for (const c of existingClaims) {
-    if (normalizeUserName(c.userName) === mine) continue;
-    claimedByOthers[`${c.rowIndex}_${c.unitIndex}`] = true;
-  }
-  for (const claim of claims) {
-    if (claimedByOthers[`${claim.rowIndex}_${claim.unitIndex}`]) {
-      throw new Error(`Slot already claimed by another user: rowIndex ${claim.rowIndex}, unitIndex ${claim.unitIndex}`);
+  const slotInfo: Record<string, { description: string; groupKey: string }> =
+    {};
+  const groupSlots: Record<string, string[]> = {};
+
+  for (const bi of billItems) {
+    const itemDesc = normalizeItemDescription(bi.description);
+    const gk = itemGroupKey(itemDesc || "item", bi.unit_price, bi.category);
+    const q = parseInt(String(bi.quantity), 10) || 0;
+    for (let u = 0; u < q; u++) {
+      const slotId = `${bi.rowIndex}_${u}`;
+      validSlots[slotId] = true;
+      slotInfo[slotId] = { description: itemDesc || "item", groupKey: gk };
+      if (!groupSlots[gk]) groupSlots[gk] = [];
+      groupSlots[gk].push(slotId);
     }
   }
-  return claims;
+
+  const normalized = claims.map(normalizeSubmitEntry);
+  for (const c of normalized) {
+    const key = `${c.rowIndex}_${c.unitIndex}`;
+    if (!validSlots[key]) throw new Error("Invalid claim slot: " + key);
+  }
+
+  const userLower = normalizeUserName(userName);
+  const othersBySlot: Record<string, ClaimRow[]> = {};
+  const otherTakenFull: Record<string, boolean> = {};
+  for (const row of sheetClaims) {
+    if (normalizeUserName(row.userName) === userLower) continue;
+    const slotId = `${row.rowIndex}_${row.unitIndex}`;
+    if (!othersBySlot[slotId]) othersBySlot[slotId] = [];
+    othersBySlot[slotId].push(row);
+    if ((row.portionCount || 1) === 1) otherTakenFull[slotId] = true;
+  }
+
+  const resolvedFullSlots: Record<string, boolean> = {};
+  const resolvedPortionKeys: Record<string, boolean> = {};
+  const resolvedClaims: ResolvedClaimRow[] = [];
+
+  for (const cl of normalized) {
+    const requestedSlot = `${cl.rowIndex}_${cl.unitIndex}`;
+    const requestedInfo = slotInfo[requestedSlot];
+    const descriptionForError = requestedInfo?.description || "item";
+
+    if (cl.isShare) {
+      const others = othersBySlot[requestedSlot] || [];
+      if (otherTakenFull[requestedSlot]) {
+        throw new Error(
+          "Another person has claimed the " + descriptionForError +
+            ". Please refresh and try again.",
+        );
+      }
+      if (others.length) {
+        const existingCount = others[0].portionCount || 1;
+        if (existingCount === 1) {
+          throw new Error(
+            "Another person has claimed the " + descriptionForError +
+              ". Please refresh and try again.",
+          );
+        }
+        if (existingCount !== cl.portionCount) {
+          throw new Error(
+            "Portion count for " + descriptionForError +
+              " is locked at " + existingCount +
+              ". Please refresh and try again.",
+          );
+        }
+        for (const o of others) {
+          const pk = `${requestedSlot}_${o.portionIndex}`;
+          if (cl.portions.indexOf(o.portionIndex) >= 0) {
+            throw new Error(
+              "Another person has claimed a portion of the " +
+                descriptionForError +
+                ". Please refresh and try again.",
+            );
+          }
+          resolvedPortionKeys[pk] = true;
+        }
+      }
+      for (const p of cl.portions) {
+        const pk = `${requestedSlot}_${p}`;
+        if (resolvedPortionKeys[pk] || resolvedFullSlots[requestedSlot]) {
+          throw new Error(
+            "Another person has claimed a portion of the " +
+              descriptionForError +
+              ". Please refresh and try again.",
+          );
+        }
+        resolvedPortionKeys[pk] = true;
+        resolvedClaims.push({
+          rowIndex: cl.rowIndex,
+          unitIndex: cl.unitIndex,
+          portionCount: cl.portionCount,
+          portionIndex: p,
+        });
+      }
+      continue;
+    }
+
+    let chosenSlot = requestedSlot;
+    const slotBlocked = (slotId: string) => {
+      if (resolvedFullSlots[slotId]) return true;
+      const others = othersBySlot[slotId] || [];
+      if (others.length) return true;
+      for (let i = 0; i < 10; i++) {
+        if (resolvedPortionKeys[`${slotId}_${i}`]) return true;
+      }
+      return false;
+    };
+    if (slotBlocked(chosenSlot)) {
+      const candidates = requestedInfo
+        ? groupSlots[requestedInfo.groupKey] || []
+        : [];
+      chosenSlot = "";
+      for (const candidate of candidates) {
+        if (slotBlocked(candidate)) continue;
+        chosenSlot = candidate;
+        break;
+      }
+      if (!chosenSlot) {
+        throw new Error(
+          "Another person has claimed the " + descriptionForError +
+            ". Please refresh and try again.",
+        );
+      }
+    }
+    resolvedFullSlots[chosenSlot] = true;
+    const split = chosenSlot.split("_");
+    resolvedClaims.push({
+      rowIndex: parseInt(split[0], 10) || 0,
+      unitIndex: parseInt(split[1], 10) || 0,
+      portionCount: 1,
+      portionIndex: 0,
+    });
+  }
+
+  return resolvedClaims;
 }
 
 async function submitClaims(sb: ReturnType<typeof createClient>, body: Record<string, unknown>) {
   const dateStr = formatDate(body.date);
   const userName = String(body.userName || "");
   const claims = Array.isArray(body.claims)
-    ? body.claims as Array<{ rowIndex: number; unitIndex: number }>
+    ? body.claims as ClaimSubmitEntry[]
     : [];
   if (!dateStr || !userName) throw new Error("Missing date or userName");
 
@@ -676,38 +930,70 @@ async function submitClaims(sb: ReturnType<typeof createClient>, body: Record<st
   }
   const client = new Client(dbUrl);
   await client.connect();
+  let resolvedCount = 0;
   try {
     await client.queryArray`BEGIN`;
     await client.queryArray`SELECT pg_advisory_xact_lock(hashtext(${dateStr}))`;
-    const itemsRes = await client.queryObject<{ row_index: number; quantity: number }>`
-      SELECT row_index, quantity FROM "theConfessional".bill_items WHERE bill_date = ${dateStr}::date ORDER BY row_index
+    const itemsRes = await client.queryObject<{
+      row_index: number;
+      category: string;
+      description: string;
+      quantity: number;
+      unit_price: number;
+    }>`
+      SELECT row_index, category, description, quantity, unit_price
+      FROM "theConfessional".bill_items
+      WHERE bill_date = ${dateStr}::date
+      ORDER BY row_index
     `;
-    const claimsRes = await client.queryObject<{ user_name: string; row_index: number; unit_index: number }>`
-      SELECT user_name, row_index, unit_index FROM "theConfessional".claims WHERE bill_date = ${dateStr}::date
+    const claimsRes = await client.queryObject<{
+      user_name: string;
+      row_index: number;
+      unit_index: number;
+      portion_count: number;
+      portion_index: number;
+    }>`
+      SELECT user_name, row_index, unit_index, portion_count, portion_index
+      FROM "theConfessional".claims
+      WHERE bill_date = ${dateStr}::date
     `;
-    resolveClaimsSubmission(
-      (itemsRes.rows || []).map((r) => ({
-        rowIndex: Number(r.row_index) || 0,
-        quantity: Number(r.quantity) || 0,
-      })),
-      (claimsRes.rows || []).map((r) => ({
-        userName: String(r.user_name || ""),
-        rowIndex: Number(r.row_index) || 0,
-        unitIndex: Number(r.unit_index) || 0,
-      })),
+    const billItemsForResolve = (itemsRes.rows || []).map((r) => ({
+      rowIndex: Number(r.row_index) || 0,
+      category: String(r.category || ""),
+      description: normalizeItemDescription(String(r.description || "")),
+      quantity: Number(r.quantity) || 0,
+      unit_price: Number(r.unit_price) || 0,
+    }));
+    const sheetClaims: ClaimRow[] = (claimsRes.rows || []).map((r) => ({
+      date: dateStr,
+      userName: String(r.user_name || ""),
+      rowIndex: Number(r.row_index) || 0,
+      unitIndex: Number(r.unit_index) || 0,
+      portionCount: Math.max(1, Number(r.portion_count) || 1),
+      portionIndex: Number(r.portion_index) || 0,
+    }));
+    const resolved = resolveClaimsSubmission(
+      billItemsForResolve,
+      sheetClaims,
       userName,
       claims,
     );
+    resolvedCount = resolved.length;
     const userNorm = normalizeUserName(userName);
     await client.queryObject`
       DELETE FROM "theConfessional".claims
       WHERE bill_date = ${dateStr}::date
       AND lower(trim(user_name)) = ${userNorm}
     `;
-    for (const c of claims) {
+    for (const c of resolved) {
       await client.queryObject`
-        INSERT INTO "theConfessional".claims (bill_date, user_name, row_index, unit_index)
-        VALUES (${dateStr}::date, ${userName}, ${c.rowIndex}, ${c.unitIndex})
+        INSERT INTO "theConfessional".claims (
+          bill_date, user_name, row_index, unit_index, portion_count, portion_index
+        )
+        VALUES (
+          ${dateStr}::date, ${userName}, ${c.rowIndex}, ${c.unitIndex},
+          ${c.portionCount}, ${c.portionIndex}
+        )
       `;
     }
     await client.queryArray`COMMIT`;
@@ -718,7 +1004,7 @@ async function submitClaims(sb: ReturnType<typeof createClient>, body: Record<st
     await client.end();
   }
   const updatedClaims = await getClaimsForDate(sb, dateStr);
-  return { ok: true, count: claims.length, claims: updatedClaims };
+  return { ok: true, count: resolvedCount, claims: updatedClaims };
 }
 
 type FinBillItem = {
@@ -734,6 +1020,8 @@ type FinClaim = {
   userName: string;
   rowIndex: number;
   unitIndex: number;
+  portionCount: number;
+  portionIndex: number;
 };
 
 type FinBill = {
@@ -774,10 +1062,20 @@ function exportCategory(cat: string): "food" | "fries" | "drinks" {
   return "drinks";
 }
 
-/** e.g. count=4, "Pt Coors" -> "4 Pt Coors" */
+/** e.g. count=4, "Pt Coors" -> "4 Pt Coors"; fractional -> "1/2 Pt Coors" */
 function formatDrinkLabel(count: number, description: string): string {
   const name = String(description || "").trim();
-  return count + " " + name;
+  const rounded = Math.round(count * 1000) / 1000;
+  if (Math.abs(rounded - Math.round(rounded)) < 0.001) {
+    return Math.round(rounded) + " " + name;
+  }
+  for (let d = 2; d <= 10; d++) {
+    const p = Math.round(rounded * d);
+    if (Math.abs(p / d - rounded) < 0.001) {
+      return p + "/" + d + " " + name;
+    }
+  }
+  return rounded + " " + name;
 }
 
 function resolveCanonicalName(name: string, configNames: string[]): string {
@@ -791,9 +1089,11 @@ function resolveCanonicalName(name: string, configNames: string[]): string {
 }
 
 function analyzeBillForFinancial(bill: FinBill) {
-  const claimMap: Record<string, string> = {};
+  const claimsBySlot: Record<string, FinClaim[]> = {};
   for (const c of bill.claims) {
-    claimMap[`${c.rowIndex}_${c.unitIndex}`] = c.userName;
+    const key = `${c.rowIndex}_${c.unitIndex}`;
+    if (!claimsBySlot[key]) claimsBySlot[key] = [];
+    claimsBySlot[key].push(c);
   }
   const byUser: Record<string, {
     food: { descs: string[]; amount: number };
@@ -807,29 +1107,48 @@ function analyzeBillForFinancial(bill: FinBill) {
     const unitPrice = Number(item.unit_price) || 0;
     const exportCat = exportCategory(item.category);
     for (let u = 0; u < qty; u++) {
-      const name = (claimMap[`${item.rowIndex}_${u}`] || "").trim();
-      if (!name) continue;
-      if (!byUser[name]) {
-        byUser[name] = {
-          food: { descs: [], amount: 0 },
-          fries: { descs: [], amount: 0 },
-          drinks: {},
-          total: 0,
-        };
+      const slotClaims = claimsBySlot[`${item.rowIndex}_${u}`] || [];
+      if (!slotClaims.length) continue;
+      const portionCount = Math.max(1, slotClaims[0].portionCount || 1);
+      const portionsByUser: Record<string, number> = {};
+      for (const c of slotClaims) {
+        const nm = String(c.userName || "").trim();
+        if (!nm) continue;
+        portionsByUser[nm] = (portionsByUser[nm] || 0) + 1;
       }
-      byUser[name].total = roundMoney(byUser[name].total + unitPrice);
-      if (exportCat === "food") {
-        byUser[name].food.descs.push(item.description);
-        byUser[name].food.amount = roundMoney(byUser[name].food.amount + unitPrice);
-      } else if (exportCat === "fries") {
-        byUser[name].fries.descs.push(item.description);
-        byUser[name].fries.amount = roundMoney(byUser[name].fries.amount + unitPrice);
-      } else {
-        const key = item.description;
-        if (!byUser[name].drinks[key]) {
-          byUser[name].drinks[key] = { count: 0, unitPrice };
+      for (const name of Object.keys(portionsByUser)) {
+        const parts = portionsByUser[name];
+        const shareAmount = roundMoney((parts / portionCount) * unitPrice);
+        if (!byUser[name]) {
+          byUser[name] = {
+            food: { descs: [], amount: 0 },
+            fries: { descs: [], amount: 0 },
+            drinks: {},
+            total: 0,
+          };
         }
-        byUser[name].drinks[key].count++;
+        byUser[name].total = roundMoney(byUser[name].total + shareAmount);
+        const qtyLabel = formatQuantityLabel(parts, portionCount);
+        const labeled = qtyLabel
+          ? String(item.description || "").trim() + " " + qtyLabel
+          : String(item.description || "").trim();
+        if (exportCat === "food") {
+          byUser[name].food.descs.push(labeled || item.description);
+          byUser[name].food.amount = roundMoney(
+            byUser[name].food.amount + shareAmount,
+          );
+        } else if (exportCat === "fries") {
+          byUser[name].fries.descs.push(labeled || item.description);
+          byUser[name].fries.amount = roundMoney(
+            byUser[name].fries.amount + shareAmount,
+          );
+        } else {
+          const key = item.description;
+          if (!byUser[name].drinks[key]) {
+            byUser[name].drinks[key] = { count: 0, unitPrice };
+          }
+          byUser[name].drinks[key].count += parts / portionCount;
+        }
       }
     }
   }
@@ -1251,6 +1570,8 @@ async function loadFinancialBills(sb: ReturnType<typeof createClient>): Promise<
       userName: String(c.userName || ""),
       rowIndex: Number(c.rowIndex) || 0,
       unitIndex: Number(c.unitIndex) || 0,
+      portionCount: Math.max(1, Number(c.portionCount) || 1),
+      portionIndex: Number(c.portionIndex) || 0,
     })),
   }));
 }

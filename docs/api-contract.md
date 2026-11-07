@@ -12,8 +12,10 @@ This contract is implemented by `supabase/functions/theconfessional-api/index.ts
 - GET `action=getBillsSummary` -> `{ bills: [{ date, open, inFlight, hasClaims, allClaimed }] }`
 - GET `action=getBillFull&date=YYYY-MM-DD` -> `{ date, open, inFlight, totalPaid, items, claims }`
 
-- POST `action=submitClaims` payload `{ date, userName, claims: [{ rowIndex, unitIndex }] }`
+- POST `action=submitClaims` payload `{ date, userName, claims: [{ rowIndex, unitIndex, portionCount?, portions? }] }`
   -> `{ ok: true, count: number, claims: Claim[] }`
+  - Omit `portions` (or empty) for a full claim of that unit (`portion_count=1`).
+  - Share claim: `{ rowIndex, unitIndex, portionCount: 2..10, portions: [indexes] }` — one DB row per portion index.
 - POST `action=analyzeBillImage` payload `{ base64, mimeType, geminiModel? }`
   -> `{ jobId, date, billTotal }`
 - POST `action=completeBillUpload` payload `{ jobId, base64, mimeType, paidAmount? }`
@@ -36,4 +38,5 @@ All responses must keep envelope: `{ error: string|null, data: unknown }`.
 
 Types:
 - `BillItem` = `{ rowIndex, category, description, quantity, unit_price, total_price }`
-- `Claim` = `{ date, userName, rowIndex, unitIndex }`
+- `Claim` = `{ date, userName, rowIndex, unitIndex, portionCount, portionIndex }`
+  - Full claim: `portionCount=1`, `portionIndex=0`. Share: equal slices under a locked `portionCount` (2–10).
