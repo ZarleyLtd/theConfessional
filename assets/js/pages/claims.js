@@ -380,10 +380,8 @@
     html += '<div class="claims-products-view">';
     html += '<p class="claims-products-intro">Claiming as <strong>' + (state.userName || '') + '</strong> · ' + dateLabel + '</p>';
     html += '<div id="claims-bill-mount"></div>';
-    html += '<div id="claims-summary-mount"></div>';
-    html += '<div id="claims-selection-area">';
-    html += '<p id="claims-descriptive-label" class="claims-descriptive-label">Your selection: (none)</p>';
-    html += '<p id="claims-estimated-cost" class="claims-estimated-cost" aria-live="polite">Estimated cost (incl tip): €?.??</p>';
+    html += '<div id="claims-selection-area" class="claims-selection">';
+    html += '<div id="claims-selection-summary" class="claims-selection__card" aria-live="polite"></div>';
     if (!state.isReviewMode) {
       html += '<button id="claims-submit-btn" type="button" class="claims-submit-btn"><span class="claims-submit-btn__text">Submit my claims</span><span class="claims-submit-btn__progress-wrap"><span class="claims-submit-btn__progress"></span></span></button>';
     }
@@ -414,11 +412,7 @@
       onScroll();
     }
     renderBill();
-    updateDescriptiveLabel();
-    var summaryMount = document.getElementById('claims-summary-mount');
-    if (typeof window.Summary !== 'undefined' && window.Summary.render && summaryMount) {
-      window.Summary.render(summaryMount, state.bill, state.claims);
-    }
+    updateSelectionSummary();
   }
 
   function openBillImageLightbox(date) {
@@ -566,11 +560,7 @@
     requestAnimationFrame(function () {
       setProductRowScrollPositions(scrollPos);
     });
-    updateDescriptiveLabel();
-    var summaryMount = document.getElementById('claims-summary-mount');
-    if (typeof window.Summary !== 'undefined' && window.Summary.render && summaryMount) {
-      window.Summary.render(summaryMount, state.bill, state.claims);
-    }
+    updateSelectionSummary();
   }
 
   function rebuildClaimMapFromSelection() {
@@ -690,69 +680,78 @@
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  function getEstimatedCostInclTip() {
+  function formatSelectionMoney(amount) {
+    var n = Math.round((Number(amount) || 0) * 100) / 100;
+    if (typeof ClaimsFormatters !== 'undefined' && ClaimsFormatters.formatCurrency) {
+      return ClaimsFormatters.formatCurrency(n);
+    }
+    return '€' + n.toFixed(2);
+  }
+
+  function updateSelectionSummary() {
+    var el = document.getElementById('claims-selection-summary');
+    if (!el) return;
+
     var bill = state.bill;
-    var items = (bill && bill.items) ? bill.items : [];
-    var sel = state.mySelection || [];
-    if (items.length === 0) return null;
-    var rowToUnitPrice = {};
+    var billItems = (bill && bill.items) ? bill.items : [];
+    var itemsByRow = {};
     var billTotal = 0;
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i];
+    for (var i = 0; i < billItems.length; i++) {
+      var it = billItems[i];
       var ri = it.rowIndex != null ? it.rowIndex : i;
-      rowToUnitPrice[ri] = parseFloat(it.unit_price) || 0;
+      itemsByRow[ri] = it;
       billTotal += parseFloat(it.total_price) || 0;
     }
-    var claimedTotal = 0;
-    for (var j = 0; j < sel.length; j++) {
-      var up = rowToUnitPrice[sel[j].rowIndex];
-      if (typeof up === 'number' && !isNaN(up)) {
-        claimedTotal += up * ClaimsState.selectionFraction(sel[j]);
-      }
-    }
-    var totalPaid = (bill.metadata && bill.metadata.totalPaid != null) ? parseFloat(bill.metadata.totalPaid) : null;
-    var tip = (totalPaid != null && !isNaN(totalPaid) && billTotal > 0 && totalPaid > billTotal)
-      ? totalPaid - billTotal
-      : 0;
-    var proportionalTip = (billTotal > 0 && claimedTotal > 0) ? tip * (claimedTotal / billTotal) : 0;
-    return claimedTotal + proportionalTip;
-  }
 
-  function updateEstimatedCost() {
-    var el = document.getElementById('claims-estimated-cost');
-    if (!el) return;
-    var value = getEstimatedCostInclTip();
-    if (value == null || (state.mySelection || []).length === 0) {
-      el.textContent = 'Estimated cost (incl tip): €?.??';
-      return;
-    }
-    el.textContent = 'Estimated cost (incl tip): €' + (Math.round(value * 100) / 100).toFixed(2);
-  }
-
-  function updateDescriptiveLabel() {
-    var el = document.getElementById('claims-descriptive-label');
-    if (!el) return;
+    var subtotal = 0;
     var byGroup = {};
-    (state.mySelection || []).forEach(function (s) {
-      var desc = findItemDescription(s.rowIndex);
-      var portionCount = ClaimsState.isShareSelection(s) ? s.portionCount : 1;
-      var portions = ClaimsState.isShareSelection(s) ? s.portions.length : 1;
-      var key = desc + '|p' + portionCount;
-      if (!byGroup[key]) {
-        byGroup[key] = { description: desc, portions: 0, portionCount: portionCount };
+    var sel = state.mySelection || [];
+    for (var s = 0; s < sel.length; s++) {
+      var slot = sel[s];
+      var item = itemsByRow[slot.rowIndex];
+      if (!item) continue;
+      var unit = parseFloat(item.unit_price) || 0;
+      var frac = ClaimsState.selectionFraction(slot);
+      subtotal += unit * frac;
+      var desc = String(item.description || 'Item').trim() || 'Item';
+      var portionCount = ClaimsState.isShareSelection(slot) ? slot.portionCount : 1;
+      var portions = ClaimsState.isShareSelection(slot) ? slot.portions.length : 1;
+      var groupKey = desc.toLowerCase() + '|p' + portionCount + '|' + Math.round(unit * 100);
+      if (!byGroup[groupKey]) {
+        byGroup[groupKey] = { description: desc, portions: 0, portionCount: portionCount };
       }
-      byGroup[key].portions += portions;
-    });
-    var parts = [];
-    var keys = Object.keys(byGroup);
-    for (var i = 0; i < keys.length; i++) {
-      var g = byGroup[keys[i]];
-      var label = ClaimsState.formatQuantityLabel(g.portions, g.portionCount);
-      var qtyText = label ? ' (' + label.replace(/^x/, '') + ')' : (g.portions > 1 ? ' (' + g.portions + ')' : '');
-      parts.push('<strong>' + escapeHtml(g.description) + '</strong>' + qtyText);
+      byGroup[groupKey].portions += portions;
     }
-    el.innerHTML = 'Your selection: ' + (parts.length ? parts.join(', ') : '(none)');
-    updateEstimatedCost();
+
+    var totalPaid = (bill && bill.metadata && bill.metadata.totalPaid != null)
+      ? parseFloat(bill.metadata.totalPaid)
+      : null;
+    if (totalPaid == null || isNaN(totalPaid)) totalPaid = billTotal;
+    var tipAmount = Math.max(0, totalPaid - billTotal);
+    var tipShare = (billTotal > 0 && subtotal > 0) ? tipAmount * (subtotal / billTotal) : 0;
+    var totalWithTip = subtotal + tipShare;
+
+    var names = Object.keys(byGroup).sort();
+    var listHtml = '';
+    if (!names.length) {
+      listHtml = '<p class="claims-selection__empty">No items selected yet.</p>';
+    } else {
+      for (var n = 0; n < names.length; n++) {
+        var g = byGroup[names[n]];
+        var qty = ClaimsState.formatQuantityLabel(g.portions, g.portionCount);
+        var qtyText = qty ? ' ' + qty : '';
+        listHtml += '<p class="claims-selection__item">' + escapeHtml(g.description) + qtyText + '</p>';
+      }
+    }
+
+    el.innerHTML =
+      '<h3 class="claims-selection__title">Selection so far</h3>' +
+      '<div class="claims-selection__items">' + listHtml + '</div>' +
+      '<ul class="claims-selection__totals">' +
+      '<li><span>Items subtotal</span><strong>' + formatSelectionMoney(subtotal) + '</strong></li>' +
+      '<li><span>Tip share</span><strong>' + formatSelectionMoney(tipShare) + '</strong></li>' +
+      '<li><span>Total with tip</span><strong>' + formatSelectionMoney(totalWithTip) + '</strong></li>' +
+      '</ul>';
   }
 
   function showClaimedByOtherMessage(claimantName, buttonEl) {
@@ -789,15 +788,15 @@
   }
 
   function showInfoMessage(text, submitBtn) {
-    var labelEl = document.getElementById('claims-descriptive-label');
+    var anchorEl = document.getElementById('claims-selection-summary') || submitBtn;
     var msg = document.createElement('div');
     msg.className = 'claims-info-message';
     msg.setAttribute('role', 'status');
     msg.setAttribute('aria-live', 'polite');
     msg.innerHTML = '<span class="claims-info-message__text">' + (text || '').replace(/</g, '&lt;') + '</span>';
     document.body.appendChild(msg);
-    if (labelEl) {
-      var rect = labelEl.getBoundingClientRect();
+    if (anchorEl) {
+      var rect = anchorEl.getBoundingClientRect();
       msg.style.top = (rect.top + rect.height / 2) + 'px';
       msg.style.left = (rect.left + rect.width / 2) + 'px';
     }

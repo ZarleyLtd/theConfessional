@@ -11,7 +11,7 @@
 ## JavaScript Module Architecture
 - **Configuration**: `/assets/js/config/sheets-config.js` – API URL and app config. Single source of truth for the Supabase Edge Function URL.
 - **Utilities**: `/assets/js/utils/` – `api.js` (backend fetch), `formatters.js`, `claims-state.js` (slot state logic). Shared logic must live here, not duplicated.
-- **Components**: `/assets/js/components/` – Reusable UI: `name-combobox.js`, `product-row.js`, `summary.js`. Each exposes a mount/render API used by the claims page.
+- **Components**: `/assets/js/components/` – Reusable UI: `name-combobox.js`, `product-row.js`, `share-claim-dialog.js`. Each exposes a mount/render API used by the claims page.
 - **Pages**: `/assets/js/pages/claims.js` – Claims page orchestration (date, name, bill, claims, submit).
 - **Entry point**: `/assets/js/main.js` – Initialises the claims page.
 - **No duplication**: Extract common patterns to utils or components.

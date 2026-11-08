@@ -752,25 +752,6 @@ body {
   padding: 0.35rem 0.6rem;
 }
 
-/* ---------- Summary ---------- */
-.claims-summary {
-  background-color: #1e293b;
-  border: 1px solid #475569;
-  border-radius: 0.5rem;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-  padding: 1rem;
-  font-size: 0.875rem;
-  color: #cbd5e1;
-}
-.claims-summary__title {
-  font-weight: 600;
-  color: #f1f5f9;
-  margin-bottom: 0.5rem;
-}
-.claims-summary__text {
-  margin: 0.25rem 0;
-}
-
 /* ---------- Products view ---------- */
 .claims-products-wrap {
   position: relative;
@@ -931,24 +912,82 @@ body {
 .claims-products-list > * + * {
   margin-top: 1rem;
 }
-.claims-descriptive-label {
-  font-size: 1rem;
-  color: #cbd5e1;
-  margin-bottom: 0.5rem;
-}
-
-.claims-estimated-cost {
-  font-size: 1rem;
-  color: #cbd5e1;
-  margin: 0;
-}
-
 #claims-selection-area {
   margin-top: 1rem;
 }
 
 #claims-selection-area > * + * {
-  margin-top: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.claims-selection__card {
+  background-color: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+  color: #cbd5e1;
+}
+
+.claims-selection__title {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.claims-selection__items {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.claims-selection__item {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: #e2e8f0;
+}
+
+.claims-selection__empty {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.claims-selection__totals {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid #334155;
+}
+
+.claims-selection__totals li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px dashed #334155;
+  font-size: 0.9375rem;
+  color: #cbd5e1;
+}
+
+.claims-selection__totals li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+.claims-selection__totals li strong {
+  color: #fbbf24;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.claims-selection__totals li:last-child strong {
+  color: #f59e0b;
 }
 .claims-submit-btn {
   margin-top: 1rem;
