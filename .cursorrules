@@ -26,3 +26,4 @@
 4. **Styling**: Keep plain CSS in `style.css` with semantic/BEM-style classes. Do not add Tailwind or other CSS frameworks.
 5. **Data schema**: Postgres tables in `supabase/migrations/` — `config_names`, `bills`, `bill_items`, `claims`, `payments`, `opening_balances`, etc. Do not change column semantics without updating both the edge function and frontend. See `docs/api-contract.md`.
 6. **Reference files**: `sampledata` and `rnrREADME.md` are reference only; do not change them when implementing features.
+7. **Share / portion claims ↔ Splitify**: The share-portion claim flow (`share-claim-dialog.js`, related claims-state / product-row / claims page wiring) also exists in the Splitify app (`C:\CursorSites\Splitify`). Visual styles may differ; **functionality should stay aligned**. If a change would make the two apps diverge functionally, remind the user to bring them back in line (or apply the same behavioral fix in both).

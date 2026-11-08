@@ -58,9 +58,10 @@
       var offset = isMine && sweep < 359 ? 8 : 0;
       var ox = offset ? Math.cos((mid - 90) * Math.PI / 180) * offset : 0;
       var oy = offset ? Math.sin((mid - 90) * Math.PI / 180) * offset : 0;
+      // Selection is shown by offsetting the slice (Splitify-style), not by recolouring.
       var fill = otherName
         ? 'url(#share-pie-claimed-hatch)'
-        : (isMine ? '#fbbf24' : COLORS[i % COLORS.length]);
+        : COLORS[i % COLORS.length];
       var cls = 'share-pie__portion';
       if (isMine) cls += ' share-pie__portion--mine';
       if (otherName) cls += ' share-pie__portion--other';

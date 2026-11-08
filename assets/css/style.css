@@ -702,7 +702,8 @@ body {
   user-select: none;
 }
 .share-pie__portion--mine path {
-  stroke: #f59e0b;
+  /* Selection is indicated by pie offset, not a highlight colour */
+  stroke: #1e293b;
   stroke-width: 3;
 }
 .share-claim-dialog__summary {

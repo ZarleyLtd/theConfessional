@@ -1,0 +1,13 @@
+---
+description: Keep share/portion claim behavior aligned with Splitify
+globs: assets/js/components/share-claim-dialog.js,assets/js/utils/claims-state.js,assets/js/components/product-row.js,assets/js/pages/claims.js
+alwaysApply: false
+---
+
+# Share / portion claim parity (Splitify)
+
+This feature also lives in **Splitify** (`C:\CursorSites\Splitify` — `share-claim-dialog.js`, `claims-state.js`, bill/claims page share wiring).
+
+- Visual styles may differ between apps.
+- **Functional behavior must stay aligned** (pie selection UX, preselection when converting a full claim, confirming all slices as a normal full claim, locking rules, etc.).
+- If work here would diverge from Splitify (or you notice they already diverge), **remind the user** to bring both apps back in line.

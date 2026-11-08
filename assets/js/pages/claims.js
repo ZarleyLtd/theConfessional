@@ -615,8 +615,10 @@
       portionCount = existing.portionCount;
       locked = true;
     } else if (existing && !ClaimsState.isShareSelection(existing)) {
-      selectedPortions = [];
+      // Converting a full claim into a share: start with all slices preselected.
       if (!othersLocked) portionCount = 2;
+      selectedPortions = [];
+      for (var p = 0; p < portionCount; p++) selectedPortions.push(p);
     }
 
     global.ShareClaimDialog.open({
@@ -631,12 +633,17 @@
           return !(s.rowIndex === rowIndex && s.unitIndex === unitIndex);
         });
         if (result.portions && result.portions.length) {
-          next.push({
-            rowIndex: rowIndex,
-            unitIndex: unitIndex,
-            portionCount: result.portionCount,
-            portions: result.portions.slice()
-          });
+          // All slices selected → same as a normal full claim (not n/n share).
+          if (result.portions.length >= result.portionCount) {
+            next.push({ rowIndex: rowIndex, unitIndex: unitIndex });
+          } else {
+            next.push({
+              rowIndex: rowIndex,
+              unitIndex: unitIndex,
+              portionCount: result.portionCount,
+              portions: result.portions.slice()
+            });
+          }
         }
         state.mySelection = next;
         rebuildClaimMapFromSelection();
